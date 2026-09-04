@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "$(id -u) $*" >> /var/log/fake-real-actions.log
+exit 0

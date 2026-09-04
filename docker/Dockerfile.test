@@ -1,0 +1,47 @@
+FROM ubuntu:26.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install required packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    uidmap \
+    sudo \
+    patch \
+    diffutils \
+    coreutils \
+    ca-certificates \
+    curl \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Delete existing default user with uid 1000 if present and create tester user
+RUN userdel -r ubuntu 2>/dev/null || true && \
+    groupadd -g 1000 tester && \
+    useradd -u 1000 -g tester -m -d /home/tester -s /bin/bash tester && \
+    echo "tester ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/tester && \
+    chmod 0440 /etc/sudoers.d/tester && \
+    echo "tester:100000:65536" >> /etc/subuid && \
+    echo "tester:100000:65536" >> /etc/subgid
+
+# Install rustup and stable Rust toolchain for tester
+USER tester
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal && \
+    mkdir -p /home/tester/.cargo/registry
+USER root
+
+# Ensure cargo and rustc are accessible system-wide
+ENV PATH="/home/tester/.cargo/bin:${PATH}"
+RUN ln -s /home/tester/.cargo/bin/* /usr/local/bin/ && \
+    echo 'export PATH="/home/tester/.cargo/bin:$PATH"' >> /etc/bash.bashrc && \
+    echo 'export PATH="/home/tester/.cargo/bin:$PATH"' >> /etc/profile && \
+    echo '. "$HOME/.cargo/env"' >> /home/tester/.bashrc && \
+    echo '. "$HOME/.cargo/env"' >> /home/tester/.profile
+
+# Install fake binaries and create action log
+COPY docker/fake-bin/systemctl /usr/bin/systemctl
+COPY docker/fake-bin/apt-get /usr/bin/apt-get
+RUN chmod 755 /usr/bin/systemctl /usr/bin/apt-get && \
+    touch /var/log/fake-real-actions.log && \
+    chmod 666 /var/log/fake-real-actions.log
+
+WORKDIR /work
