@@ -372,3 +372,309 @@ fn open_write_readonly_lower_file_succeeds() {
     r.read_to_string(&mut contents).unwrap();
     assert_eq!(contents, "read-only content!");
 }
+
+#[test]
+fn rename_lower_file() {
+    let mut env = TestEnv::new();
+    let lower_a = env.lower_dir.path().join("a");
+    std::fs::create_dir_all(&lower_a).unwrap();
+    std::fs::write(lower_a.join("b.txt"), b"hi").unwrap();
+
+    env.overlay
+        .rename(
+            Path::new("/a/b.txt"),
+            Path::new("/a/c.txt"),
+            RenameFlags::default(),
+        )
+        .unwrap();
+
+    let err = env.overlay.stat(Path::new("/a/b.txt")).unwrap_err();
+    assert_eq!(err.raw_os_error(), Some(libc::ENOENT));
+
+    let attr = env.overlay.stat(Path::new("/a/c.txt")).unwrap();
+    assert_eq!(attr.kind, FileKind::File);
+    assert_eq!(attr.size, 2);
+
+    let mut r = env.overlay.open_read(Path::new("/a/c.txt")).unwrap();
+    let mut contents = String::new();
+    r.read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, "hi");
+
+    let old_node = env
+        .overlay
+        .nodes()
+        .get(Path::new("/a/b.txt"))
+        .expect("old node exists");
+    match old_node {
+        UpperNode::Whiteout { .. } => {}
+        _ => panic!("expected old node to be Whiteout"),
+    }
+
+    let new_node = env
+        .overlay
+        .nodes()
+        .get(Path::new("/a/c.txt"))
+        .expect("new node exists");
+    match new_node {
+        UpperNode::File { origin, .. } => {
+            assert!(origin.is_none(), "expected origin: None for new node");
+        }
+        _ => panic!("expected new node to be File"),
+    }
+
+    // Lower file is unchanged
+    assert_eq!(
+        std::fs::read_to_string(lower_a.join("b.txt")).unwrap(),
+        "hi"
+    );
+    assert!(!lower_a.join("c.txt").exists());
+}
+
+#[test]
+fn rename_over_existing_replaces() {
+    let mut env = TestEnv::new();
+    let lower_a = env.lower_dir.path().join("a");
+    std::fs::create_dir_all(&lower_a).unwrap();
+    std::fs::write(lower_a.join("src.txt"), b"source content").unwrap();
+    std::fs::write(lower_a.join("dst.txt"), b"dest content").unwrap();
+
+    env.overlay
+        .rename(
+            Path::new("/a/src.txt"),
+            Path::new("/a/dst.txt"),
+            RenameFlags::default(),
+        )
+        .unwrap();
+
+    let mut r = env.overlay.open_read(Path::new("/a/dst.txt")).unwrap();
+    let mut contents = String::new();
+    r.read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, "source content");
+
+    let dst_node = env
+        .overlay
+        .nodes()
+        .get(Path::new("/a/dst.txt"))
+        .expect("dst node exists");
+    match dst_node {
+        UpperNode::File { origin, .. } => {
+            assert!(
+                origin.is_some(),
+                "expected origin: Some for replaced target node"
+            );
+        }
+        _ => panic!("expected dst node to be File"),
+    }
+}
+
+#[test]
+fn rename_noreplace_existing_is_eexist() {
+    let mut env = TestEnv::new();
+    let lower_a = env.lower_dir.path().join("a");
+    std::fs::create_dir_all(&lower_a).unwrap();
+    std::fs::write(lower_a.join("src.txt"), b"source").unwrap();
+    std::fs::write(lower_a.join("dst.txt"), b"dest").unwrap();
+
+    let err = env
+        .overlay
+        .rename(
+            Path::new("/a/src.txt"),
+            Path::new("/a/dst.txt"),
+            RenameFlags {
+                noreplace: true,
+                exchange: false,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(err.raw_os_error(), Some(libc::EEXIST));
+}
+
+#[test]
+fn rename_exchange_is_einval() {
+    let mut env = TestEnv::new();
+    let lower_a = env.lower_dir.path().join("a");
+    std::fs::create_dir_all(&lower_a).unwrap();
+    std::fs::write(lower_a.join("f1.txt"), b"1").unwrap();
+    std::fs::write(lower_a.join("f2.txt"), b"2").unwrap();
+
+    let err = env
+        .overlay
+        .rename(
+            Path::new("/a/f1.txt"),
+            Path::new("/a/f2.txt"),
+            RenameFlags {
+                noreplace: false,
+                exchange: true,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(err.raw_os_error(), Some(libc::EINVAL));
+}
+
+#[test]
+fn rename_lower_dir_is_exdev() {
+    let mut env = TestEnv::new();
+    let lower_dir = env.lower_dir.path().join("lower_dir");
+    std::fs::create_dir_all(&lower_dir).unwrap();
+
+    let err = env
+        .overlay
+        .rename(
+            Path::new("/lower_dir"),
+            Path::new("/renamed_dir"),
+            RenameFlags::default(),
+        )
+        .unwrap_err();
+    assert_eq!(err.raw_os_error(), Some(libc::EXDEV));
+}
+
+#[test]
+fn rename_upper_dir_moves_subtree() {
+    let mut env = TestEnv::new();
+    env.overlay
+        .mkdir(Path::new("/n"), 0o755, 1000, 1000)
+        .unwrap();
+    let mut f = env
+        .overlay
+        .create_file(Path::new("/n/f"), 0o644, 1000, 1000)
+        .unwrap();
+    f.write_all(b"payload").unwrap();
+    drop(f);
+
+    env.overlay
+        .rename(Path::new("/n"), Path::new("/m"), RenameFlags::default())
+        .unwrap();
+
+    let attr = env.overlay.stat(Path::new("/m/f")).unwrap();
+    assert_eq!(attr.kind, FileKind::File);
+    assert_eq!(attr.size, 7);
+
+    // No node remains under /n
+    for key in env.overlay.nodes().keys() {
+        assert!(
+            key != Path::new("/n") && !key.starts_with(Path::new("/n")),
+            "unexpected node under /n: {:?}",
+            key
+        );
+    }
+    let err = env.overlay.stat(Path::new("/n")).unwrap_err();
+    assert_eq!(err.raw_os_error(), Some(libc::ENOENT));
+}
+
+#[test]
+fn symlink_and_readlink() {
+    let mut env = TestEnv::new();
+    let lower_a = env.lower_dir.path().join("a");
+    std::fs::create_dir_all(&lower_a).unwrap();
+
+    env.overlay
+        .symlink(Path::new("/a/l"), Path::new("b.txt"), 1000, 1000)
+        .unwrap();
+
+    let target = env.overlay.read_link(Path::new("/a/l")).unwrap();
+    assert_eq!(target, PathBuf::from("b.txt"));
+
+    let attr = env.overlay.stat(Path::new("/a/l")).unwrap();
+    assert_eq!(attr.kind, FileKind::Symlink);
+    assert_eq!(attr.meta.uid, 1000);
+    assert_eq!(attr.meta.gid, 1000);
+}
+
+#[test]
+fn link_copies_content() {
+    let mut env = TestEnv::new();
+    let lower_a = env.lower_dir.path().join("a");
+    std::fs::create_dir_all(&lower_a).unwrap();
+    std::fs::write(lower_a.join("orig.txt"), b"original").unwrap();
+
+    env.overlay
+        .link(Path::new("/a/orig.txt"), Path::new("/a/linked.txt"))
+        .unwrap();
+
+    let attr = env.overlay.stat(Path::new("/a/linked.txt")).unwrap();
+    assert_eq!(attr.kind, FileKind::File);
+    assert_eq!(attr.size, 8);
+
+    let mut r = env.overlay.open_read(Path::new("/a/linked.txt")).unwrap();
+    let mut contents = String::new();
+    r.read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, "original");
+
+    // Modify original via open_write
+    let mut w = env
+        .overlay
+        .open_write(Path::new("/a/orig.txt"), true)
+        .unwrap();
+    w.write_all(b"modified").unwrap();
+    drop(w);
+
+    // Linked file retains its original content (independent copy)
+    let mut r = env.overlay.open_read(Path::new("/a/linked.txt")).unwrap();
+    let mut contents = String::new();
+    r.read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, "original");
+}
+
+#[test]
+fn chmod_lower_copies_up_with_new_mode() {
+    let mut env = TestEnv::new();
+    let lower_a = env.lower_dir.path().join("a");
+    std::fs::create_dir_all(&lower_a).unwrap();
+    std::fs::write(lower_a.join("script.sh"), b"echo 123").unwrap();
+
+    let attr = env
+        .overlay
+        .setattr(
+            Path::new("/a/script.sh"),
+            &SetAttr {
+                mode: Some(0o755),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(attr.meta.mode, 0o755);
+
+    let node = env
+        .overlay
+        .nodes()
+        .get(Path::new("/a/script.sh"))
+        .expect("node exists");
+    match node {
+        UpperNode::File { meta, origin, .. } => {
+            assert_eq!(meta.mode, 0o755);
+            assert!(origin.is_some(), "expected origin: Some(_)");
+        }
+        _ => panic!("expected File node"),
+    }
+
+    let mut r = env.overlay.open_read(Path::new("/a/script.sh")).unwrap();
+    let mut contents = String::new();
+    r.read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, "echo 123");
+}
+
+#[test]
+fn truncate_and_chown() {
+    let mut env = TestEnv::new();
+    let lower_a = env.lower_dir.path().join("a");
+    std::fs::create_dir_all(&lower_a).unwrap();
+    std::fs::write(lower_a.join("data.txt"), b"data to truncate").unwrap();
+
+    let attr = env
+        .overlay
+        .setattr(
+            Path::new("/a/data.txt"),
+            &SetAttr {
+                size: Some(0),
+                uid: Some(0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(attr.size, 0);
+    assert_eq!(attr.meta.uid, 0);
+
+    let stat_attr = env.overlay.stat(Path::new("/a/data.txt")).unwrap();
+    assert_eq!(stat_attr.size, 0);
+    assert_eq!(stat_attr.meta.uid, 0);
+}
