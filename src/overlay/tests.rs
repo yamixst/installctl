@@ -317,3 +317,58 @@ fn synthetic_dir_creation_and_stat() {
         _ => panic!("expected Dir node"),
     }
 }
+
+#[test]
+fn read_dir_respects_opaque_ancestor() {
+    let mut env = TestEnv::new();
+    let lower_ab = env.lower_dir.path().join("a").join("b");
+    std::fs::create_dir_all(&lower_ab).unwrap();
+    std::fs::write(lower_ab.join("c.txt"), b"secret").unwrap();
+
+    // Whiteout and rmdir lower /a/b/c.txt, /a/b, and /a
+    env.overlay.unlink(Path::new("/a/b/c.txt")).unwrap();
+    env.overlay.rmdir(Path::new("/a/b")).unwrap();
+    env.overlay.rmdir(Path::new("/a")).unwrap();
+
+    // Recreate /a over whiteout -> opaque: true
+    env.overlay
+        .mkdir(Path::new("/a"), 0o755, 1000, 1000)
+        .unwrap();
+
+    // Create /a/b in upper (opaque: false)
+    env.overlay
+        .mkdir(Path::new("/a/b"), 0o755, 1000, 1000)
+        .unwrap();
+
+    // read_dir on /a/b must NOT resurrect lower /a/b/c.txt
+    let entries = env.overlay.read_dir(Path::new("/a/b")).unwrap();
+    assert!(
+        entries.is_empty(),
+        "expected empty dir under opaque ancestor, got: {:?}",
+        entries
+    );
+}
+
+#[test]
+fn open_write_readonly_lower_file_succeeds() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut env = TestEnv::new();
+    let lower_file = env.lower_dir.path().join("readonly.txt");
+    std::fs::write(&lower_file, b"read-only content").unwrap();
+    let mut perms = std::fs::metadata(&lower_file).unwrap().permissions();
+    perms.set_mode(0o444);
+    std::fs::set_permissions(&lower_file, perms).unwrap();
+
+    let mut f = env
+        .overlay
+        .open_write(Path::new("/readonly.txt"), false)
+        .expect("open_write on read-only lower file should succeed");
+    f.seek(SeekFrom::End(0)).unwrap();
+    f.write_all(b"!").unwrap();
+    drop(f);
+
+    let mut r = env.overlay.open_read(Path::new("/readonly.txt")).unwrap();
+    let mut contents = String::new();
+    r.read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, "read-only content!");
+}

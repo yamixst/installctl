@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
 #[cfg(test)]
@@ -307,7 +307,7 @@ impl Overlay {
             }
         }
 
-        if !is_opaque {
+        if !is_opaque && !self.is_lower_ancestor_hidden(&path) {
             let lower_path = self.lower_path(&path);
             if let Ok(rd) = std::fs::read_dir(&lower_path) {
                 for entry in rd.flatten() {
@@ -416,6 +416,10 @@ impl Overlay {
             let blob_path = self.upper_dir.join("blobs").join(self.blob_seq.to_string());
             let lower_path = self.lower_path(&path);
             std::fs::copy(&lower_path, &blob_path)?;
+
+            let mut perms = std::fs::metadata(&blob_path)?.permissions();
+            perms.set_mode(perms.mode() | 0o200);
+            std::fs::set_permissions(&blob_path, perms)?;
 
             let file = std::fs::OpenOptions::new()
                 .read(true)
