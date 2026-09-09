@@ -428,14 +428,7 @@ impl Overlay {
                 return Err(io::Error::from_raw_os_error(libc::EINVAL));
             }
 
-            self.blob_seq += 1;
-            let blob_path = self.upper_dir.join("blobs").join(self.blob_seq.to_string());
-            let lower_path = self.lower_path(&path);
-            std::fs::copy(&lower_path, &blob_path)?;
-
-            let mut perms = std::fs::metadata(&blob_path)?.permissions();
-            perms.set_mode(perms.mode() | 0o200);
-            std::fs::set_permissions(&blob_path, perms)?;
+            let blob_path = self.copy_up_file(&path)?;
 
             let file = std::fs::OpenOptions::new()
                 .read(true)
@@ -753,6 +746,10 @@ impl Overlay {
         Ok(())
     }
 
+    /// Creates a hard link at `new` pointing to `existing`.
+    ///
+    /// Limitation: Hard links become independent files because the overlay
+    /// duplicates the content blob instead of maintaining multi-link shared inodes.
     pub fn link(&mut self, existing: &Path, new: &Path) -> io::Result<()> {
         let existing = normalize_path(existing);
         let new = normalize_path(new);
@@ -832,6 +829,8 @@ impl Overlay {
         let from = normalize_path(from);
         let to = normalize_path(to);
 
+        let from_attr = self.stat(&from)?;
+
         if from == to {
             return Ok(());
         }
@@ -851,8 +850,6 @@ impl Overlay {
         if to_parent_attr.kind != FileKind::Dir {
             return Err(io::Error::from_raw_os_error(libc::ENOTDIR));
         }
-
-        let from_attr = self.stat(&from)?;
 
         if from_attr.kind == FileKind::Dir {
             let is_lower_dir = !matches!(
@@ -895,9 +892,10 @@ impl Overlay {
             None
         };
 
-        if let Some(UpperNode::File { blob, .. }) = self.nodes.get(&to) {
-            let _ = std::fs::remove_file(blob);
-        }
+        let old_target_blob = match self.nodes.get(&to) {
+            Some(UpperNode::File { blob, .. }) => Some(blob.clone()),
+            _ => None,
+        };
 
         if from_attr.kind == FileKind::Dir {
             let keys_to_move: Vec<PathBuf> = self
@@ -1008,6 +1006,10 @@ impl Overlay {
                     }
                 }
             }
+        }
+
+        if let Some(blob) = old_target_blob {
+            let _ = std::fs::remove_file(blob);
         }
 
         Ok(())

@@ -678,3 +678,17 @@ fn truncate_and_chown() {
     assert_eq!(stat_attr.size, 0);
     assert_eq!(stat_attr.meta.uid, 0);
 }
+
+#[test]
+fn rename_missing_to_missing_is_enoent() {
+    let mut env = TestEnv::new();
+    let err = env
+        .overlay
+        .rename(
+            Path::new("/missing"),
+            Path::new("/missing"),
+            RenameFlags::default(),
+        )
+        .unwrap_err();
+    assert_eq!(err.raw_os_error(), Some(libc::ENOENT));
+}
