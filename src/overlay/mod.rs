@@ -162,7 +162,7 @@ impl Overlay {
         &self.nodes
     }
 
-    fn lower_path(&self, path: &Path) -> PathBuf {
+    pub(crate) fn lower_path(&self, path: &Path) -> PathBuf {
         let rel = path.strip_prefix("/").unwrap_or(path);
         self.lower_root.join(rel)
     }
@@ -189,7 +189,7 @@ impl Overlay {
         false
     }
 
-    fn stat_lower(&self, path: &Path) -> io::Result<LowerStamp> {
+    pub(crate) fn stat_lower(&self, path: &Path) -> io::Result<LowerStamp> {
         let lower_path = self.lower_path(path);
         let meta = std::fs::symlink_metadata(&lower_path)
             .map_err(|e| io::Error::from_raw_os_error(e.raw_os_error().unwrap_or(libc::ENOENT)))?;
