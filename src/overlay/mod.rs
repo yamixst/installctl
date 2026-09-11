@@ -6,6 +6,8 @@ use std::io;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
+pub mod fuse;
+
 #[cfg(test)]
 mod tests;
 
