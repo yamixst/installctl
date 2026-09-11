@@ -33,6 +33,33 @@ fn kind_order(k: ChangeKind) -> u8 {
     }
 }
 
+fn deleted_change(path: PathBuf, stamp: LowerStamp) -> Change {
+    Change {
+        path,
+        kind: ChangeKind::Deleted,
+        entry: stamp.kind,
+        size: stamp.size,
+        mode: stamp.meta.mode,
+        owner: (stamp.meta.uid, stamp.meta.gid),
+        blob: None,
+        link_target: None,
+        origin: Some(stamp),
+    }
+}
+
+fn read_chunk<R: Read>(reader: &mut R, buf: &mut [u8]) -> io::Result<usize> {
+    let mut total = 0;
+    while total < buf.len() {
+        match reader.read(&mut buf[total..]) {
+            Ok(0) => break,
+            Ok(n) => total += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(total)
+}
+
 fn files_content_equal(blob_path: &Path, lower_path: &Path) -> io::Result<bool> {
     let blob_meta = std::fs::metadata(blob_path)?;
     let lower_meta = match std::fs::symlink_metadata(lower_path) {
@@ -56,8 +83,8 @@ fn files_content_equal(blob_path: &Path, lower_path: &Path) -> io::Result<bool> 
     let mut buf_lower = [0u8; 8192];
 
     loop {
-        let n_blob = blob_file.read(&mut buf_blob)?;
-        let n_lower = lower_file.read(&mut buf_lower)?;
+        let n_blob = read_chunk(&mut blob_file, &mut buf_blob)?;
+        let n_lower = read_chunk(&mut lower_file, &mut buf_lower)?;
         if n_blob != n_lower {
             return Ok(false);
         }
@@ -73,7 +100,7 @@ fn files_content_equal(blob_path: &Path, lower_path: &Path) -> io::Result<bool> 
 fn collect_lower_descendants(
     overlay: &Overlay,
     base_overlay_path: &Path,
-    out: &mut Vec<PathBuf>,
+    out: &mut Vec<(PathBuf, LowerStamp)>,
 ) -> io::Result<()> {
     let lower_dir = overlay.lower_path(base_overlay_path);
     let rd = match std::fs::read_dir(&lower_dir) {
@@ -100,9 +127,36 @@ fn collect_lower_descendants(
             Err(e) if e.raw_os_error() == Some(libc::ENOENT) => continue,
             Err(e) => return Err(e),
         };
-        out.push(child_overlay_path.clone());
-        if stamp.kind == FileKind::Dir {
+        let is_dir = stamp.kind == FileKind::Dir;
+        out.push((child_overlay_path.clone(), stamp));
+        if is_dir {
             collect_lower_descendants(overlay, &child_overlay_path, out)?;
+        }
+    }
+    Ok(())
+}
+
+fn add_change(
+    changes: &mut Vec<Change>,
+    seen: &mut HashSet<(PathBuf, ChangeKind)>,
+    change: Change,
+) {
+    if seen.insert((change.path.clone(), change.kind)) {
+        changes.push(change);
+    }
+}
+
+fn delete_lower_descendants(
+    overlay: &Overlay,
+    dir_path: &Path,
+    changes: &mut Vec<Change>,
+    seen: &mut HashSet<(PathBuf, ChangeKind)>,
+) -> io::Result<()> {
+    let mut descendants = Vec::new();
+    collect_lower_descendants(overlay, dir_path, &mut descendants)?;
+    for (desc_path, stamp) in descendants {
+        if !overlay.nodes().contains_key(&desc_path) {
+            add_change(changes, seen, deleted_change(desc_path, stamp));
         }
     }
     Ok(())
@@ -112,83 +166,16 @@ pub fn collect(overlay: &Overlay) -> io::Result<Vec<Change>> {
     let mut seen = HashSet::new();
     let mut changes = Vec::new();
 
-    let mut add_change = |change: Change| {
-        if seen.insert((change.path.clone(), change.kind)) {
-            changes.push(change);
-        }
-    };
-
     for (path, node) in overlay.nodes() {
         match node {
             UpperNode::File { blob, meta, origin } => {
                 let size = std::fs::metadata(blob)?.len();
                 match origin {
                     None => {
-                        add_change(Change {
-                            path: path.clone(),
-                            kind: ChangeKind::Created,
-                            entry: FileKind::File,
-                            size,
-                            mode: meta.mode,
-                            owner: (meta.uid, meta.gid),
-                            blob: Some(blob.clone()),
-                            link_target: None,
-                            origin: None,
-                        });
-                    }
-                    Some(origin) => {
-                        if origin.kind == FileKind::File {
-                            let mode_equal = meta.mode == origin.meta.mode;
-                            let owner_equal =
-                                (meta.uid, meta.gid) == (origin.meta.uid, origin.meta.gid);
-                            let content_equal =
-                                files_content_equal(blob, &overlay.lower_path(path))?;
-                            if !(mode_equal && owner_equal && content_equal) {
-                                add_change(Change {
-                                    path: path.clone(),
-                                    kind: ChangeKind::Modified,
-                                    entry: FileKind::File,
-                                    size,
-                                    mode: meta.mode,
-                                    owner: (meta.uid, meta.gid),
-                                    blob: Some(blob.clone()),
-                                    link_target: None,
-                                    origin: Some(origin.clone()),
-                                });
-                            }
-                        } else {
-                            add_change(Change {
-                                path: path.clone(),
-                                kind: ChangeKind::Deleted,
-                                entry: origin.kind,
-                                size: origin.size,
-                                mode: origin.meta.mode,
-                                owner: (origin.meta.uid, origin.meta.gid),
-                                blob: None,
-                                link_target: None,
-                                origin: Some(origin.clone()),
-                            });
-                            if origin.kind == FileKind::Dir {
-                                let mut descendants = Vec::new();
-                                collect_lower_descendants(overlay, path, &mut descendants)?;
-                                for desc_path in descendants {
-                                    if !overlay.nodes().contains_key(&desc_path) {
-                                        let stamp = overlay.stat_lower(&desc_path)?;
-                                        add_change(Change {
-                                            path: desc_path,
-                                            kind: ChangeKind::Deleted,
-                                            entry: stamp.kind,
-                                            size: stamp.size,
-                                            mode: stamp.meta.mode,
-                                            owner: (stamp.meta.uid, stamp.meta.gid),
-                                            blob: None,
-                                            link_target: None,
-                                            origin: Some(stamp),
-                                        });
-                                    }
-                                }
-                            }
-                            add_change(Change {
+                        add_change(
+                            &mut changes,
+                            &mut seen,
+                            Change {
                                 path: path.clone(),
                                 kind: ChangeKind::Created,
                                 entry: FileKind::File,
@@ -198,7 +185,62 @@ pub fn collect(overlay: &Overlay) -> io::Result<Vec<Change>> {
                                 blob: Some(blob.clone()),
                                 link_target: None,
                                 origin: None,
-                            });
+                            },
+                        );
+                    }
+                    Some(origin) => {
+                        if origin.kind == FileKind::File {
+                            let mode_equal = meta.mode == origin.meta.mode;
+                            let owner_equal =
+                                (meta.uid, meta.gid) == (origin.meta.uid, origin.meta.gid);
+                            let content_equal =
+                                files_content_equal(blob, &overlay.lower_path(path))?;
+                            if !(mode_equal && owner_equal && content_equal) {
+                                add_change(
+                                    &mut changes,
+                                    &mut seen,
+                                    Change {
+                                        path: path.clone(),
+                                        kind: ChangeKind::Modified,
+                                        entry: FileKind::File,
+                                        size,
+                                        mode: meta.mode,
+                                        owner: (meta.uid, meta.gid),
+                                        blob: Some(blob.clone()),
+                                        link_target: None,
+                                        origin: Some(origin.clone()),
+                                    },
+                                );
+                            }
+                        } else {
+                            add_change(
+                                &mut changes,
+                                &mut seen,
+                                deleted_change(path.clone(), origin.clone()),
+                            );
+                            if origin.kind == FileKind::Dir {
+                                delete_lower_descendants(
+                                    overlay,
+                                    path,
+                                    &mut changes,
+                                    &mut seen,
+                                )?;
+                            }
+                            add_change(
+                                &mut changes,
+                                &mut seen,
+                                Change {
+                                    path: path.clone(),
+                                    kind: ChangeKind::Created,
+                                    entry: FileKind::File,
+                                    size,
+                                    mode: meta.mode,
+                                    owner: (meta.uid, meta.gid),
+                                    blob: Some(blob.clone()),
+                                    link_target: None,
+                                    origin: None,
+                                },
+                            );
                         }
                     }
                 }
@@ -214,69 +256,10 @@ pub fn collect(overlay: &Overlay) -> io::Result<Vec<Change>> {
                 }
                 match origin {
                     None => {
-                        add_change(Change {
-                            path: path.clone(),
-                            kind: ChangeKind::Created,
-                            entry: FileKind::Dir,
-                            size: 4096,
-                            mode: meta.mode,
-                            owner: (meta.uid, meta.gid),
-                            blob: None,
-                            link_target: None,
-                            origin: None,
-                        });
-                    }
-                    Some(origin) => {
-                        if origin.kind == FileKind::Dir {
-                            let mode_equal = meta.mode == origin.meta.mode;
-                            let owner_equal =
-                                (meta.uid, meta.gid) == (origin.meta.uid, origin.meta.gid);
-                            if !(mode_equal && owner_equal) {
-                                add_change(Change {
-                                    path: path.clone(),
-                                    kind: ChangeKind::Modified,
-                                    entry: FileKind::Dir,
-                                    size: 4096,
-                                    mode: meta.mode,
-                                    owner: (meta.uid, meta.gid),
-                                    blob: None,
-                                    link_target: None,
-                                    origin: Some(origin.clone()),
-                                });
-                            }
-                            if *opaque {
-                                let mut descendants = Vec::new();
-                                collect_lower_descendants(overlay, path, &mut descendants)?;
-                                for desc_path in descendants {
-                                    if !overlay.nodes().contains_key(&desc_path) {
-                                        let stamp = overlay.stat_lower(&desc_path)?;
-                                        add_change(Change {
-                                            path: desc_path,
-                                            kind: ChangeKind::Deleted,
-                                            entry: stamp.kind,
-                                            size: stamp.size,
-                                            mode: stamp.meta.mode,
-                                            owner: (stamp.meta.uid, stamp.meta.gid),
-                                            blob: None,
-                                            link_target: None,
-                                            origin: Some(stamp),
-                                        });
-                                    }
-                                }
-                            }
-                        } else {
-                            add_change(Change {
-                                path: path.clone(),
-                                kind: ChangeKind::Deleted,
-                                entry: origin.kind,
-                                size: origin.size,
-                                mode: origin.meta.mode,
-                                owner: (origin.meta.uid, origin.meta.gid),
-                                blob: None,
-                                link_target: None,
-                                origin: Some(origin.clone()),
-                            });
-                            add_change(Change {
+                        add_change(
+                            &mut changes,
+                            &mut seen,
+                            Change {
                                 path: path.clone(),
                                 kind: ChangeKind::Created,
                                 entry: FileKind::Dir,
@@ -286,7 +269,60 @@ pub fn collect(overlay: &Overlay) -> io::Result<Vec<Change>> {
                                 blob: None,
                                 link_target: None,
                                 origin: None,
-                            });
+                            },
+                        );
+                    }
+                    Some(origin) => {
+                        if origin.kind == FileKind::Dir {
+                            let mode_equal = meta.mode == origin.meta.mode;
+                            let owner_equal =
+                                (meta.uid, meta.gid) == (origin.meta.uid, origin.meta.gid);
+                            if !(mode_equal && owner_equal) {
+                                add_change(
+                                    &mut changes,
+                                    &mut seen,
+                                    Change {
+                                        path: path.clone(),
+                                        kind: ChangeKind::Modified,
+                                        entry: FileKind::Dir,
+                                        size: 4096,
+                                        mode: meta.mode,
+                                        owner: (meta.uid, meta.gid),
+                                        blob: None,
+                                        link_target: None,
+                                        origin: Some(origin.clone()),
+                                    },
+                                );
+                            }
+                            if *opaque {
+                                delete_lower_descendants(
+                                    overlay,
+                                    path,
+                                    &mut changes,
+                                    &mut seen,
+                                )?;
+                            }
+                        } else {
+                            add_change(
+                                &mut changes,
+                                &mut seen,
+                                deleted_change(path.clone(), origin.clone()),
+                            );
+                            add_change(
+                                &mut changes,
+                                &mut seen,
+                                Change {
+                                    path: path.clone(),
+                                    kind: ChangeKind::Created,
+                                    entry: FileKind::Dir,
+                                    size: 4096,
+                                    mode: meta.mode,
+                                    owner: (meta.uid, meta.gid),
+                                    blob: None,
+                                    link_target: None,
+                                    origin: None,
+                                },
+                            );
                         }
                     }
                 }
@@ -299,71 +335,10 @@ pub fn collect(overlay: &Overlay) -> io::Result<Vec<Change>> {
                 let size = target.as_os_str().len() as u64;
                 match origin {
                     None => {
-                        add_change(Change {
-                            path: path.clone(),
-                            kind: ChangeKind::Created,
-                            entry: FileKind::Symlink,
-                            size,
-                            mode: meta.mode,
-                            owner: (meta.uid, meta.gid),
-                            blob: None,
-                            link_target: Some(target.clone()),
-                            origin: None,
-                        });
-                    }
-                    Some(origin) => {
-                        if origin.kind == FileKind::Symlink {
-                            let mode_equal = meta.mode == origin.meta.mode;
-                            let owner_equal =
-                                (meta.uid, meta.gid) == (origin.meta.uid, origin.meta.gid);
-                            let lower_target = std::fs::read_link(overlay.lower_path(path)).ok();
-                            let target_equal = lower_target.as_ref() == Some(target);
-                            if !(mode_equal && owner_equal && target_equal) {
-                                add_change(Change {
-                                    path: path.clone(),
-                                    kind: ChangeKind::Modified,
-                                    entry: FileKind::Symlink,
-                                    size,
-                                    mode: meta.mode,
-                                    owner: (meta.uid, meta.gid),
-                                    blob: None,
-                                    link_target: Some(target.clone()),
-                                    origin: Some(origin.clone()),
-                                });
-                            }
-                        } else {
-                            add_change(Change {
-                                path: path.clone(),
-                                kind: ChangeKind::Deleted,
-                                entry: origin.kind,
-                                size: origin.size,
-                                mode: origin.meta.mode,
-                                owner: (origin.meta.uid, origin.meta.gid),
-                                blob: None,
-                                link_target: None,
-                                origin: Some(origin.clone()),
-                            });
-                            if origin.kind == FileKind::Dir {
-                                let mut descendants = Vec::new();
-                                collect_lower_descendants(overlay, path, &mut descendants)?;
-                                for desc_path in descendants {
-                                    if !overlay.nodes().contains_key(&desc_path) {
-                                        let stamp = overlay.stat_lower(&desc_path)?;
-                                        add_change(Change {
-                                            path: desc_path,
-                                            kind: ChangeKind::Deleted,
-                                            entry: stamp.kind,
-                                            size: stamp.size,
-                                            mode: stamp.meta.mode,
-                                            owner: (stamp.meta.uid, stamp.meta.gid),
-                                            blob: None,
-                                            link_target: None,
-                                            origin: Some(stamp),
-                                        });
-                                    }
-                                }
-                            }
-                            add_change(Change {
+                        add_change(
+                            &mut changes,
+                            &mut seen,
+                            Change {
                                 path: path.clone(),
                                 kind: ChangeKind::Created,
                                 entry: FileKind::Symlink,
@@ -373,40 +348,79 @@ pub fn collect(overlay: &Overlay) -> io::Result<Vec<Change>> {
                                 blob: None,
                                 link_target: Some(target.clone()),
                                 origin: None,
-                            });
+                            },
+                        );
+                    }
+                    Some(origin) => {
+                        if origin.kind == FileKind::Symlink {
+                            let mode_equal = meta.mode == origin.meta.mode;
+                            let owner_equal =
+                                (meta.uid, meta.gid) == (origin.meta.uid, origin.meta.gid);
+                            let lower_target = std::fs::read_link(overlay.lower_path(path)).ok();
+                            let target_equal = lower_target.as_ref() == Some(target);
+                            if !(mode_equal && owner_equal && target_equal) {
+                                add_change(
+                                    &mut changes,
+                                    &mut seen,
+                                    Change {
+                                        path: path.clone(),
+                                        kind: ChangeKind::Modified,
+                                        entry: FileKind::Symlink,
+                                        size,
+                                        mode: meta.mode,
+                                        owner: (meta.uid, meta.gid),
+                                        blob: None,
+                                        link_target: Some(target.clone()),
+                                        origin: Some(origin.clone()),
+                                    },
+                                );
+                            }
+                        } else {
+                            add_change(
+                                &mut changes,
+                                &mut seen,
+                                deleted_change(path.clone(), origin.clone()),
+                            );
+                            if origin.kind == FileKind::Dir {
+                                delete_lower_descendants(
+                                    overlay,
+                                    path,
+                                    &mut changes,
+                                    &mut seen,
+                                )?;
+                            }
+                            add_change(
+                                &mut changes,
+                                &mut seen,
+                                Change {
+                                    path: path.clone(),
+                                    kind: ChangeKind::Created,
+                                    entry: FileKind::Symlink,
+                                    size,
+                                    mode: meta.mode,
+                                    owner: (meta.uid, meta.gid),
+                                    blob: None,
+                                    link_target: Some(target.clone()),
+                                    origin: None,
+                                },
+                            );
                         }
                     }
                 }
             }
             UpperNode::Whiteout { origin } => {
-                add_change(Change {
-                    path: path.clone(),
-                    kind: ChangeKind::Deleted,
-                    entry: origin.kind,
-                    size: origin.size,
-                    mode: origin.meta.mode,
-                    owner: (origin.meta.uid, origin.meta.gid),
-                    blob: None,
-                    link_target: None,
-                    origin: Some(origin.clone()),
-                });
+                add_change(
+                    &mut changes,
+                    &mut seen,
+                    deleted_change(path.clone(), origin.clone()),
+                );
                 if origin.kind == FileKind::Dir {
-                    let mut descendants = Vec::new();
-                    collect_lower_descendants(overlay, path, &mut descendants)?;
-                    for desc_path in descendants {
-                        let stamp = overlay.stat_lower(&desc_path)?;
-                        add_change(Change {
-                            path: desc_path,
-                            kind: ChangeKind::Deleted,
-                            entry: stamp.kind,
-                            size: stamp.size,
-                            mode: stamp.meta.mode,
-                            owner: (stamp.meta.uid, stamp.meta.gid),
-                            blob: None,
-                            link_target: None,
-                            origin: Some(stamp),
-                        });
-                    }
+                    delete_lower_descendants(
+                        overlay,
+                        path,
+                        &mut changes,
+                        &mut seen,
+                    )?;
                 }
             }
         }
@@ -714,5 +728,29 @@ mod tests {
         assert_eq!(changes[0].kind, ChangeKind::Modified);
         assert_eq!(changes[0].entry, FileKind::Dir);
         assert_eq!(changes[0].mode, 0o700);
+    }
+
+    #[test]
+    fn identical_large_file_dropped() {
+        let mut env = TestEnv::new();
+        let lower = env.lower_dir.path();
+        // Create 32KB file in lower
+        let large_content = vec![0x42u8; 32768];
+        std::fs::write(lower.join("large.bin"), &large_content).unwrap();
+
+        // Rewrite identical content in overlay
+        let mut f = env
+            .overlay
+            .open_write(Path::new("/large.bin"), true)
+            .unwrap();
+        f.write_all(&large_content).unwrap();
+        drop(f);
+
+        let changes = collect(&env.overlay).unwrap();
+        assert!(
+            changes.is_empty(),
+            "identical large file should be dropped, got: {:?}",
+            changes
+        );
     }
 }
