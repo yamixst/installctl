@@ -3,6 +3,7 @@ mod common;
 use std::fs;
 use std::io::{IoSlice, IoSliceMut, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
 use std::sync::{Arc, Mutex};
@@ -94,7 +95,14 @@ fn in_userns_with_mount<F: FnOnce(&Path)>(lower: &Path, f: F) -> MountContext {
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 f(mountpoint);
             }));
-            if res.is_err() {
+            if let Err(err) = res {
+                if let Some(s) = err.downcast_ref::<&str>() {
+                    eprintln!("child panic: {s}");
+                } else if let Some(s) = err.downcast_ref::<String>() {
+                    eprintln!("child panic: {s}");
+                } else {
+                    eprintln!("child panic: unknown payload");
+                }
                 exit(1);
             } else {
                 exit(0);
@@ -164,7 +172,11 @@ fn fuse_basic_ops() {
 
     fs::write(lower.join("to_read.txt"), "hello from lower\n").unwrap();
     fs::write(lower.join("to_append.txt"), "initial\n").unwrap();
+    fs::set_permissions(lower.join("to_append.txt"), fs::Permissions::from_mode(0o666)).unwrap();
     fs::write(lower.join("to_delete.txt"), "delete me\n").unwrap();
+
+    let _ = Command::new("sudo").args(["chown", "-R", "0:0"]).arg(lower).status();
+    let _ = Command::new("sudo").args(["chmod", "777", lower.to_str().unwrap()]).status();
 
     let ctx = in_userns_with_mount(lower, |mount| {
         // 1. Read lower file
@@ -258,6 +270,9 @@ fn fuse_mv_lower_dir_falls_back() {
     fs::create_dir_all(&sub).unwrap();
     fs::write(sub.join("file1.txt"), "file1 content\n").unwrap();
     fs::write(sub.join("file2.txt"), "file2 content\n").unwrap();
+
+    let _ = Command::new("sudo").args(["chown", "-R", "0:0"]).arg(lower).status();
+    let _ = Command::new("sudo").args(["chmod", "777", lower.to_str().unwrap()]).status();
 
     let _ctx = in_userns_with_mount(lower, |mount| {
         let src = mount.join("orig_dir");

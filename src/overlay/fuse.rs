@@ -123,10 +123,8 @@ pub fn serve(fs: OverlayFs, fd: OwnedFd) -> io::Result<BackgroundSession> {
 }
 
 fn attr_to_fileattr(attr: &Attr, ino: INodeNo) -> FileAttr {
-    let host_uid = nix::unistd::geteuid().as_raw();
-    let host_gid = nix::unistd::getegid().as_raw();
-    let uid = if attr.meta.uid == host_uid { 0 } else { attr.meta.uid };
-    let gid = if attr.meta.gid == host_gid { 0 } else { attr.meta.gid };
+    let uid = attr.meta.uid;
+    let gid = attr.meta.gid;
 
     let kind = match attr.kind {
         FileKind::File => FileType::RegularFile,

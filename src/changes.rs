@@ -672,6 +672,11 @@ mod tests {
         let mut env = TestEnv::new();
         let lower_d = env.lower_dir.path().join("d");
         std::fs::create_dir_all(&lower_d).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&lower_d, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         std::fs::write(lower_d.join("a"), b"child a").unwrap();
         std::fs::write(lower_d.join("b"), b"child b").unwrap();
 
@@ -710,6 +715,11 @@ mod tests {
         let mut env = TestEnv::new();
         let lower_d = env.lower_dir.path().join("d");
         std::fs::create_dir_all(&lower_d).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&lower_d, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
 
         // Modify mode of /d
         env.overlay
