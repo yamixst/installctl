@@ -86,6 +86,7 @@ pub struct SetAttr {
     pub mtime_ns: Option<i128>,
 }
 
+#[derive(Clone, Debug)]
 pub struct Overlay {
     lower_root: PathBuf,
     upper_dir: PathBuf,
