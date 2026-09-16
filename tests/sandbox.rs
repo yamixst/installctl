@@ -232,3 +232,14 @@ fn exit_code_propagates() {
     let outcome = run("exit 7");
     assert_eq!(outcome.exit_code, 7);
 }
+
+#[test]
+fn sigint_terminates_child() {
+    if !common::priv_env() {
+        return;
+    }
+    let (_keep_temp, home) = create_sbx_home();
+    let outcome = run_with_home(&home, "kill -INT $$; echo survived > $HOME/survived");
+    assert_eq!(outcome.exit_code, 130);
+    assert!(!home.join("survived").exists());
+}

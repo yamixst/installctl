@@ -60,15 +60,19 @@ impl Drop for SigintGuard {
 }
 
 struct ChildGuard {
-    pid: Pid,
+    c_pid: Pid,
+    i_pid: Option<Pid>,
     reaped: bool,
 }
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         if !self.reaped {
-            let _ = nix::sys::signal::kill(self.pid, nix::sys::signal::Signal::SIGKILL);
-            let _ = waitpid(self.pid, None);
+            if let Some(i_pid) = self.i_pid {
+                let _ = nix::sys::signal::kill(i_pid, nix::sys::signal::Signal::SIGKILL);
+            }
+            let _ = nix::sys::signal::kill(self.c_pid, nix::sys::signal::Signal::SIGKILL);
+            let _ = waitpid(self.c_pid, None);
         }
     }
 }
@@ -129,6 +133,7 @@ pub fn run_sandboxed(
     // 5. Fork C
     let c_pid = match unsafe { fork()? } {
         ForkResult::Child => {
+            drop(action_listener);
             drop(ctl_p);
             drop(c_to_p_r);
             drop(p_to_c_w);
@@ -197,7 +202,8 @@ pub fn run_sandboxed(
     drop(p_to_c_r);
 
     let mut child_guard = ChildGuard {
-        pid: c_pid,
+        c_pid,
+        i_pid: None,
         reaped: false,
     };
 
@@ -224,6 +230,7 @@ pub fn run_sandboxed(
         .read_exact(&mut i_pid_buf)
         .map_err(|e| anyhow::anyhow!("failed to read I's PID from C: {e}"))?;
     let i_pid = i32::from_le_bytes(i_pid_buf);
+    child_guard.i_pid = Some(Pid::from_raw(i_pid));
     drop(c_to_p_file);
 
     // Host P: Event loop

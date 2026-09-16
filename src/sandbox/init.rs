@@ -127,6 +127,13 @@ fn run_init_inner(cfg: &SandboxConfig, ctl_i: &UnixStream) -> anyhow::Result<()>
             let c_flag = CString::new("-c").unwrap();
             let cmd = CString::new(cfg.command.as_str()).unwrap();
 
+            unsafe {
+                let _ = nix::sys::signal::signal(
+                    nix::sys::signal::Signal::SIGINT,
+                    nix::sys::signal::SigHandler::SigDfl,
+                );
+            }
+
             let _ = nix::unistd::execv(&sh, &[sh.as_c_str(), c_flag.as_c_str(), cmd.as_c_str()]);
             unsafe { libc::_exit(127) };
         }

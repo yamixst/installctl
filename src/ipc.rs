@@ -117,6 +117,13 @@ pub fn recv_msg<T: DeserializeOwned>(sock: &UnixStream) -> io::Result<(T, Vec<Ow
     }
 
     let payload_len = u32::from_le_bytes(len_buf) as usize;
+    const MAX_MSG_SIZE: usize = 64 * 1024 * 1024;
+    if payload_len > MAX_MSG_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("message length {payload_len} exceeds maximum allowed {MAX_MSG_SIZE}"),
+        ));
+    }
     let mut payload = vec![0u8; payload_len];
     use std::io::Read;
     (&*sock).read_exact(&mut payload)?;
@@ -153,5 +160,16 @@ mod tests {
         let mut buf = String::new();
         r_file.read_to_string(&mut buf).unwrap();
         assert_eq!(buf, "roundtrip payload");
+    }
+
+    #[test]
+    fn message_exceeding_max_size_is_rejected() {
+        let (mut sock1, sock2) = UnixStream::pair().unwrap();
+        let huge_len = (100 * 1024 * 1024u32).to_le_bytes();
+        sock1.write_all(&huge_len).unwrap();
+
+        let res = recv_msg::<InitEvent>(&sock2);
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err().kind(), io::ErrorKind::InvalidData);
     }
 }
