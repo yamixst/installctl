@@ -243,3 +243,48 @@ fn sigint_terminates_child() {
     assert_eq!(outcome.exit_code, 130);
     assert!(!home.join("survived").exists());
 }
+
+#[test]
+fn sudo_writes_system_path_staged() {
+    if !common::priv_env() {
+        return;
+    }
+    let (_keep_temp, home) = create_sbx_home();
+    let outcome = run_with_home(
+        &home,
+        "sudo sh -c 'echo x > /usr/local/bin/tool && chmod 755 /usr/local/bin/tool' && test \"$(sudo id -u)\" = 0",
+    );
+    assert_eq!(outcome.exit_code, 0);
+
+    let host_tool = Path::new("/usr/local/bin/tool");
+    assert!(!host_tool.exists(), "host /usr/local/bin/tool should not exist");
+
+    let changes = collect(&outcome.overlay).expect("collect changes");
+    let change = changes
+        .iter()
+        .find(|c| c.path == host_tool)
+        .expect("/usr/local/bin/tool should be in changes");
+    assert_eq!(change.kind, ChangeKind::Created);
+
+    let node = outcome
+        .overlay
+        .nodes()
+        .get(host_tool)
+        .expect("node for /usr/local/bin/tool in overlay");
+    match node {
+        UpperNode::File { meta, .. } => {
+            assert_eq!((meta.uid, meta.gid), (0, 0), "owner should be (0, 0)");
+            assert_eq!(meta.mode & 0o777, 0o755, "mode should be 0o755");
+        }
+        other => panic!("expected File node, got {:?}", other),
+    }
+}
+
+#[test]
+fn sudo_never_asks_password() {
+    if !common::priv_env() {
+        return;
+    }
+    let outcome = run("sudo true < /dev/null");
+    assert_eq!(outcome.exit_code, 0);
+}

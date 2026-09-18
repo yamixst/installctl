@@ -117,6 +117,32 @@ pub fn run_sandboxed(
         .map_err(|e| anyhow::anyhow!("failed to bind action.sock at {:?}: {e}", action_sock_path))?;
     action_listener.set_nonblocking(true)?;
 
+    // Create run_dir/bin/sudo symlink -> /run/installctl/installctl
+    let bin_dir = cfg.run_dir.join("bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let sudo_symlink = bin_dir.join("sudo");
+    let _ = std::fs::remove_file(&sudo_symlink);
+    std::os::unix::fs::symlink("/run/installctl/installctl", &sudo_symlink)?;
+
+    // Ensure run_dir/installctl exists
+    let installctl_link = cfg.run_dir.join("installctl");
+    if !installctl_link.exists() && cfg.exe.exists() {
+        if let Ok(rel) = cfg.exe.strip_prefix(&cfg.run_dir) {
+            let _ = std::os::unix::fs::symlink(rel, &installctl_link);
+        } else {
+            let _ = std::fs::copy(&cfg.exe, &installctl_link);
+        }
+    }
+
+    // Populate shim_targets with every existing sudo in /usr/bin, /bin, /usr/local/bin
+    let mut effective_cfg = cfg.clone();
+    for p in ["/usr/bin/sudo", "/bin/sudo", "/usr/local/bin/sudo"] {
+        let target = PathBuf::from(p);
+        if target.exists() && !effective_cfg.shim_targets.contains(&target) {
+            effective_cfg.shim_targets.push(target);
+        }
+    }
+
     // 4. Communication channels
     let (ctl_p, ctl_i) = socketpair(
         AddressFamily::Unix,
@@ -186,7 +212,7 @@ pub fn run_sandboxed(
                 }
                 Ok(ForkResult::Child) => {
                     drop(writer);
-                    init::run_init(cfg, ctl_i);
+                    init::run_init(&effective_cfg, ctl_i);
                 }
                 Err(e) => {
                     eprintln!("C fork I failed: {e}");
