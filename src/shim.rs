@@ -1,8 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::ffi::CString;
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 
 use crate::ipc;
 use crate::sandbox::SANDBOX_RUN_DIR;
@@ -61,7 +61,10 @@ pub fn parse_sudo_args_full(args: &[String]) -> Result<ParsedSudo, String> {
             "-u" => {
                 i += 1;
                 if i >= args.len() {
-                    return Err("usage: sudo [-E] [-H] [-n] [-S] [-k] [-u user] command [arg ...]".to_string());
+                    return Err(
+                        "usage: sudo [-E] [-H] [-n] [-S] [-k] [-u user] command [arg ...]"
+                            .to_string(),
+                    );
                 }
                 let target = &args[i];
                 i += 1;
@@ -70,7 +73,10 @@ pub fn parse_sudo_args_full(args: &[String]) -> Result<ParsedSudo, String> {
                 } else if current_user.as_deref() == Some(target.as_str()) {
                     run_as_current_user = true;
                 } else {
-                    return Err(format!("installctl: sudo option -u {} is not supported", target));
+                    return Err(format!(
+                        "installctl: sudo option -u {} is not supported",
+                        target
+                    ));
                 }
             }
             _ if arg.starts_with("-u") => {
@@ -81,7 +87,10 @@ pub fn parse_sudo_args_full(args: &[String]) -> Result<ParsedSudo, String> {
                 } else if current_user.as_deref() == Some(target) {
                     run_as_current_user = true;
                 } else {
-                    return Err(format!("installctl: sudo option -u {} is not supported", target));
+                    return Err(format!(
+                        "installctl: sudo option -u {} is not supported",
+                        target
+                    ));
                 }
             }
             _ => {
@@ -161,7 +170,11 @@ pub fn sudo_main() -> i32 {
     let stdout = std::io::stdout();
     let stderr = std::io::stderr();
 
-    if let Err(e) = ipc::send_msg(&sock, &req, &[stdin.as_fd(), stdout.as_fd(), stderr.as_fd()]) {
+    if let Err(e) = ipc::send_msg(
+        &sock,
+        &req,
+        &[stdin.as_fd(), stdout.as_fd(), stderr.as_fd()],
+    ) {
         eprintln!("sudo: failed to send request: {e}");
         return 1;
     }
@@ -176,7 +189,58 @@ pub fn sudo_main() -> i32 {
 }
 
 pub fn action_main() -> i32 {
-    0
+    let mut argv: Vec<String> = std::env::args().collect();
+    if !argv.is_empty() {
+        let basename = std::path::Path::new(&argv[0])
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&argv[0])
+            .to_string();
+        argv[0] = basename;
+    }
+
+    let sock_path = format!("{}/action.sock", SANDBOX_RUN_DIR);
+    let sock = match UnixStream::connect(&sock_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!(
+                "installctl action shim: cannot connect to action service at {sock_path}: {e}"
+            );
+            return 1;
+        }
+    };
+
+    let env: Vec<(String, String)> = std::env::vars().collect();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    let as_root = nix::unistd::getuid().as_raw() == 0 || nix::unistd::geteuid().as_raw() == 0;
+
+    let req = crate::control::ActionRequest {
+        argv,
+        env,
+        cwd,
+        as_root,
+    };
+
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+
+    if let Err(e) = ipc::send_msg(
+        &sock,
+        &req,
+        &[stdin.as_fd(), stdout.as_fd(), stderr.as_fd()],
+    ) {
+        eprintln!("installctl action shim: failed to send request: {e}");
+        return 1;
+    }
+
+    match ipc::recv_msg::<ipc::ExitStatus>(&sock) {
+        Ok((status, _)) => status.code,
+        Err(e) => {
+            eprintln!("installctl action shim: failed to receive response: {e}");
+            1
+        }
+    }
 }
 
 #[cfg(test)]
@@ -237,10 +301,7 @@ mod tests {
 
     #[test]
     fn parse_sudo_args_unsupported_flag_err() {
-        let args: Vec<String> = vec!["-x", "id"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let args: Vec<String> = vec!["-x", "id"].into_iter().map(String::from).collect();
         let res = parse_sudo_args(&args);
         assert!(res.is_err());
         assert_eq!(

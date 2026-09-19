@@ -1,12 +1,16 @@
 pub mod actions;
 pub mod changes;
+pub mod control;
 pub mod ipc;
 pub mod overlay;
 pub mod prereq;
+pub mod prompt;
 pub mod sandbox;
 pub mod shim;
 pub mod staging;
 
+pub use control::{ActionController, ActionRecord, ActionRequest, Decision, run_on_host};
+pub use prompt::Prompter;
 pub use sandbox::SANDBOX_RUN_DIR;
 pub use shim::SudoRequest;
 

@@ -1,17 +1,17 @@
+use nix::fcntl::OFlag;
+use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+use nix::sched::CloneFlags;
+use nix::sys::socket::{AddressFamily, SockFlag, SockType, socketpair};
+use nix::sys::wait::{WaitStatus, waitpid};
+use nix::unistd::{ForkResult, Gid, Pid, Uid, fork};
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use nix::fcntl::OFlag;
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
-use nix::sched::CloneFlags;
-use nix::sys::socket::{socketpair, AddressFamily, SockFlag, SockType};
-use nix::sys::wait::{waitpid, WaitStatus};
-use nix::unistd::{fork, ForkResult, Gid, Pid, Uid};
 
 use crate::ipc::{self, HostCommand, InitEvent, Leftover};
-use crate::overlay::fuse::{new_fs, serve};
 use crate::overlay::Overlay;
+use crate::overlay::fuse::{new_fs, serve};
 use crate::prereq::UserInfo;
 
 pub mod idmap;
@@ -26,7 +26,7 @@ pub struct SandboxConfig {
     pub staging_upper: PathBuf,
     pub run_dir: PathBuf,
     pub mountpoint: PathBuf,
-    pub exe: PathBuf, /* copy of installctl in run_dir */
+    pub exe: PathBuf,               /* copy of installctl in run_dir */
     pub shim_targets: Vec<PathBuf>, /* real paths to bind the exe over; empty in this task */
     pub cwd: PathBuf,
 }
@@ -51,10 +51,7 @@ struct SigintGuard {
 impl Drop for SigintGuard {
     fn drop(&mut self) {
         unsafe {
-            let _ = nix::sys::signal::signal(
-                nix::sys::signal::Signal::SIGINT,
-                self.old_handler,
-            );
+            let _ = nix::sys::signal::signal(nix::sys::signal::Signal::SIGINT, self.old_handler);
         }
     }
 }
@@ -96,16 +93,18 @@ pub fn run_sandboxed(
     let subuid_content = std::fs::read_to_string("/etc/subuid")
         .map_err(|e| anyhow::anyhow!("cannot read /etc/subuid: {e}"))?;
     let (sub_uid_start, sub_uid_count) =
-        idmap::parse_subid(&subuid_content, &cfg.user.name, cfg.user.uid)
-            .ok_or_else(|| anyhow::anyhow!("no subordinate UID range for user {}", cfg.user.name))?;
+        idmap::parse_subid(&subuid_content, &cfg.user.name, cfg.user.uid).ok_or_else(|| {
+            anyhow::anyhow!("no subordinate UID range for user {}", cfg.user.name)
+        })?;
     let uid_ranges = idmap::compute_map(cfg.user.uid, sub_uid_start, sub_uid_count)
         .map_err(|e| anyhow::anyhow!("failed to compute uid map: {e}"))?;
 
     let subgid_content = std::fs::read_to_string("/etc/subgid")
         .map_err(|e| anyhow::anyhow!("cannot read /etc/subgid: {e}"))?;
     let (sub_gid_start, sub_gid_count) =
-        idmap::parse_subid(&subgid_content, &cfg.user.name, cfg.user.gid)
-            .ok_or_else(|| anyhow::anyhow!("no subordinate GID range for user {}", cfg.user.name))?;
+        idmap::parse_subid(&subgid_content, &cfg.user.name, cfg.user.gid).ok_or_else(|| {
+            anyhow::anyhow!("no subordinate GID range for user {}", cfg.user.name)
+        })?;
     let gid_ranges = idmap::compute_map(cfg.user.gid, sub_gid_start, sub_gid_count)
         .map_err(|e| anyhow::anyhow!("failed to compute gid map: {e}"))?;
 
@@ -113,16 +112,24 @@ pub fn run_sandboxed(
     std::fs::create_dir_all(&cfg.run_dir)?;
     let action_sock_path = cfg.run_dir.join("action.sock");
     let _ = std::fs::remove_file(&action_sock_path);
-    let action_listener = std::os::unix::net::UnixListener::bind(&action_sock_path)
-        .map_err(|e| anyhow::anyhow!("failed to bind action.sock at {:?}: {e}", action_sock_path))?;
+    let action_listener =
+        std::os::unix::net::UnixListener::bind(&action_sock_path).map_err(|e| {
+            anyhow::anyhow!("failed to bind action.sock at {:?}: {e}", action_sock_path)
+        })?;
     action_listener.set_nonblocking(true)?;
 
-    // Create run_dir/bin/sudo symlink -> /run/installctl/installctl
+    // Create run_dir/bin/sudo and catalog command symlinks -> /run/installctl/installctl
     let bin_dir = cfg.run_dir.join("bin");
     std::fs::create_dir_all(&bin_dir)?;
     let sudo_symlink = bin_dir.join("sudo");
     let _ = std::fs::remove_file(&sudo_symlink);
     std::os::unix::fs::symlink("/run/installctl/installctl", &sudo_symlink)?;
+
+    for &(cmd, _) in crate::actions::COMMANDS {
+        let symlink = bin_dir.join(cmd);
+        let _ = std::fs::remove_file(&symlink);
+        std::os::unix::fs::symlink("/run/installctl/installctl", &symlink)?;
+    }
 
     // Ensure run_dir/installctl exists
     let installctl_link = cfg.run_dir.join("installctl");
@@ -135,11 +142,30 @@ pub fn run_sandboxed(
     }
 
     // Populate shim_targets with every existing sudo in /usr/bin, /bin, /usr/local/bin
+    // and every catalog command in /usr/local/sbin, /usr/local/bin, /usr/sbin, /usr/bin, /sbin, /bin
+    const SEARCH_DIRS: &[&str] = &[
+        "/usr/local/sbin",
+        "/usr/local/bin",
+        "/usr/sbin",
+        "/usr/bin",
+        "/sbin",
+        "/bin",
+    ];
+
     let mut effective_cfg = cfg.clone();
     for p in ["/usr/bin/sudo", "/bin/sudo", "/usr/local/bin/sudo"] {
         let target = PathBuf::from(p);
         if target.exists() && !effective_cfg.shim_targets.contains(&target) {
             effective_cfg.shim_targets.push(target);
+        }
+    }
+
+    for dir in SEARCH_DIRS {
+        for &(cmd, _) in crate::actions::COMMANDS {
+            let target = Path::new(dir).join(cmd);
+            if target.exists() && !effective_cfg.shim_targets.contains(&target) {
+                effective_cfg.shim_targets.push(target);
+            }
         }
     }
 
@@ -336,10 +362,7 @@ pub fn run_sandboxed(
     }
 
     if aborted {
-        let _ = nix::sys::signal::kill(
-            Pid::from_raw(i_pid),
-            nix::sys::signal::Signal::SIGKILL,
-        );
+        let _ = nix::sys::signal::kill(Pid::from_raw(i_pid), nix::sys::signal::Signal::SIGKILL);
         exit_code = 137;
     }
 
