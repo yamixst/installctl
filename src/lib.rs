@@ -5,6 +5,7 @@ pub mod ipc;
 pub mod overlay;
 pub mod prereq;
 pub mod prompt;
+pub mod report;
 pub mod sandbox;
 pub mod shim;
 pub mod staging;
