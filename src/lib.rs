@@ -1,3 +1,4 @@
+pub mod actions;
 pub mod changes;
 pub mod ipc;
 pub mod overlay;
