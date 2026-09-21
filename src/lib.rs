@@ -18,28 +18,30 @@ pub use shim::SudoRequest;
 
 pub fn main_entry() -> i32 {
     let args: Vec<String> = std::env::args().collect();
-    if let Some(pos) = args.iter().position(|a| a == "--apply-helper") {
-        if let Some(plan_str) = args.get(pos + 1) {
-            let plan = std::path::Path::new(plan_str);
-            if let Err(e) = apply::helper_main(plan) {
-                eprintln!("installctl helper error: {e:#}");
-                return 1;
-            }
-            return 0;
-        } else {
-            eprintln!("installctl: missing plan argument for --apply-helper");
-            return 1;
-        }
-    }
-
     let argv0 = args.first().map(|s| s.as_str()).unwrap_or_default();
     let basename = std::path::Path::new(argv0)
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("");
+
     match basename {
         "sudo" => shim::sudo_main(),
-        "installctl" | "" => 0,
+        "installctl" | "" => {
+            if let Some(pos) = args.iter().position(|a| a == "--apply-helper") {
+                if let Some(plan_str) = args.get(pos + 1) {
+                    let plan = std::path::Path::new(plan_str);
+                    if let Err(e) = apply::helper_main(plan) {
+                        eprintln!("installctl helper error: {e:#}");
+                        return 1;
+                    }
+                    return 0;
+                } else {
+                    eprintln!("installctl: missing plan argument for --apply-helper");
+                    return 1;
+                }
+            }
+            0
+        }
         _ => shim::action_main(),
     }
 }

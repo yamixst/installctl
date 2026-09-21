@@ -220,13 +220,13 @@ pub fn apply(changes: &[Change], root: &Path, as_root: bool) -> io::Result<()> {
                 }
                 std::fs::create_dir(&target)?;
             }
+            if as_root {
+                chown_path(&target, 0, 0)?;
+            }
             std::fs::set_permissions(
                 &target,
                 std::fs::Permissions::from_mode(change.mode & 0o7777),
             )?;
-            if as_root {
-                chown_path(&target, 0, 0)?;
-            }
         } else if change.kind == ChangeKind::Modified {
             std::fs::set_permissions(
                 &target,
@@ -295,46 +295,45 @@ pub fn apply(changes: &[Change], root: &Path, as_root: bool) -> io::Result<()> {
                 return Err(e);
             }
         } else {
-            let mut tmp_file = std::fs::File::create(&tmp_path)?;
-            if let Some(ref blob_path) = change.blob {
-                let mut blob_file = std::fs::File::open(blob_path)?;
-                std::io::copy(&mut blob_file, &mut tmp_file)?;
-            }
-            tmp_file.sync_all()?;
-            tmp_file.set_permissions(std::fs::Permissions::from_mode(change.mode & 0o7777))?;
-
-            if as_root {
-                use std::os::unix::io::AsRawFd;
-                match change.kind {
-                    ChangeKind::Created => {
-                        let ret = unsafe { libc::fchown(tmp_file.as_raw_fd(), 0, 0) };
-                        if ret != 0 {
-                            let err = io::Error::last_os_error();
-                            drop(tmp_file);
-                            let _ = std::fs::remove_file(&tmp_path);
-                            return Err(err);
-                        }
-                    }
-                    ChangeKind::Modified => {
-                        let (uid, gid) = if let Ok(meta) = target.symlink_metadata() {
-                            (meta.uid(), meta.gid())
-                        } else {
-                            change.owner
-                        };
-                        let ret = unsafe { libc::fchown(tmp_file.as_raw_fd(), uid, gid) };
-                        if ret != 0 {
-                            let err = io::Error::last_os_error();
-                            drop(tmp_file);
-                            let _ = std::fs::remove_file(&tmp_path);
-                            return Err(err);
-                        }
-                    }
-                    _ => {}
+            let write_file = || -> io::Result<()> {
+                let mut tmp_file = std::fs::File::create(&tmp_path)?;
+                if let Some(ref blob_path) = change.blob {
+                    let mut blob_file = std::fs::File::open(blob_path)?;
+                    std::io::copy(&mut blob_file, &mut tmp_file)?;
                 }
-            }
+                tmp_file.sync_all()?;
 
-            drop(tmp_file);
-            if let Err(e) = std::fs::rename(&tmp_path, &target) {
+                if as_root {
+                    use std::os::unix::io::AsRawFd;
+                    match change.kind {
+                        ChangeKind::Created => {
+                            let ret = unsafe { libc::fchown(tmp_file.as_raw_fd(), 0, 0) };
+                            if ret != 0 {
+                                return Err(io::Error::last_os_error());
+                            }
+                        }
+                        ChangeKind::Modified => {
+                            let (uid, gid) = if let Ok(meta) = target.symlink_metadata() {
+                                (meta.uid(), meta.gid())
+                            } else {
+                                change.owner
+                            };
+                            let ret = unsafe { libc::fchown(tmp_file.as_raw_fd(), uid, gid) };
+                            if ret != 0 {
+                                return Err(io::Error::last_os_error());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                tmp_file.set_permissions(std::fs::Permissions::from_mode(change.mode & 0o7777))?;
+                drop(tmp_file);
+                std::fs::rename(&tmp_path, &target)?;
+                Ok(())
+            };
+
+            if let Err(e) = write_file() {
                 let _ = std::fs::remove_file(&tmp_path);
                 return Err(e);
             }
@@ -806,7 +805,7 @@ mod tests {
             kind: ChangeKind::Created,
             entry: FileKind::File,
             size: 26,
-            mode: 0o755,
+            mode: 0o4755,
             owner: (0, 0),
             blob: Some(blob_path),
             link_target: None,
@@ -825,11 +824,11 @@ mod tests {
 
         assert!(status.success(), "sudo helper exited with failure: {status}");
 
-        // Target file must exist, owned 0:0, mode 0755
+        // Target file must exist, owned 0:0, mode 04755 (verifying SUID bit preserved after fchown)
         let meta = fs::symlink_metadata(target_path).expect("/usr/local/bin/t must exist");
         assert_eq!(meta.uid(), 0, "target file must be owned by root uid 0");
         assert_eq!(meta.gid(), 0, "target file must be owned by root gid 0");
-        assert_eq!(meta.mode() & 0o777, 0o755, "target file mode must be 0755");
+        assert_eq!(meta.mode() & 0o7777, 0o4755, "target file mode must be 04755 with SUID preserved");
 
         // Originals file must exist and be owned by tester
         let orig_path = originals_path(&plan_path);
