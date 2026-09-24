@@ -451,16 +451,16 @@ mod tests {
                 return path;
             }
         }
-        if let Ok(cur) = std::env::current_exe() {
-            if let Some(parent) = cur.parent() {
-                let candidate = parent.parent().unwrap_or(parent).join("installctl");
-                if candidate.is_file() {
-                    return candidate;
-                }
-                let candidate = parent.join("installctl");
-                if candidate.is_file() {
-                    return candidate;
-                }
+        if let Ok(cur) = std::env::current_exe()
+            && let Some(parent) = cur.parent()
+        {
+            let candidate = parent.parent().unwrap_or(parent).join("installctl");
+            if candidate.is_file() {
+                return candidate;
+            }
+            let candidate = parent.join("installctl");
+            if candidate.is_file() {
+                return candidate;
             }
         }
         for candidate in &[
@@ -480,10 +480,10 @@ mod tests {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.contains(".installctl-tmp") {
-                        return true;
-                    }
+                if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                    && name.contains(".installctl-tmp")
+                {
+                    return true;
                 }
                 if path.is_dir() && has_installctl_tmp_files(&path) {
                     return true;

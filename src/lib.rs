@@ -3,6 +3,7 @@ pub mod apply;
 pub mod changes;
 pub mod control;
 pub mod ipc;
+pub mod naming;
 pub mod overlay;
 pub mod prereq;
 pub mod prompt;
