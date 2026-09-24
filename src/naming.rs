@@ -67,31 +67,36 @@ pub fn path_dirs(user: &UserInfo) -> Vec<PathBuf> {
     dirs
 }
 
+fn prompt_valid_name(p: &mut dyn Prompter) -> String {
+    loop {
+        let input = p.input("Program name:", None);
+        if valid_name(&input) {
+            return input;
+        }
+    }
+}
+
 /// Selects a program name:
 /// - Valid `cli` wins.
-/// - If `cli` is None or invalid:
+/// - Invalid `cli` or no candidates -> `input("Program name:", None)` until valid.
+/// - If `cli` is None:
 ///   - One candidate -> return it.
 ///   - 2..=9 candidates -> `choose` with digits '1'..'9'.
 ///   - >9 candidates -> `input` asking to type one of them, validating the response.
-///   - None (empty) -> `input("Program name:", None)` until valid.
 pub fn choose_name(
     cli: Option<&str>,
     candidates: &[String],
     p: &mut dyn Prompter,
 ) -> String {
-    if let Some(name) = cli
-        && valid_name(name)
-    {
-        return name.to_string();
+    if let Some(name) = cli {
+        if valid_name(name) {
+            return name.to_string();
+        }
+        return prompt_valid_name(p);
     }
 
     match candidates.len() {
-        0 => loop {
-            let input = p.input("Program name:", None);
-            if valid_name(&input) {
-                return input;
-            }
-        },
+        0 => prompt_valid_name(p),
         1 => candidates[0].clone(),
         2..=9 => {
             let options: Vec<(char, &str)> = candidates
@@ -249,9 +254,20 @@ mod tests {
 
     #[test]
     fn test_choose_name_invalid_cli_prompts_input() {
+        // Empty candidates
         let mut p = ScriptedPrompter::new(vec!["good".into()]);
         let chosen = choose_name(Some("bad/name"), &[], &mut p);
         assert_eq!(chosen, "good");
+
+        // Candidates exist, but invalid cli argument must prompt for input rather than picking candidate
+        let mut p = ScriptedPrompter::new(vec!["good".into()]);
+        let chosen = choose_name(Some("bad/name"), &["cand".into()], &mut p);
+        assert_eq!(chosen, "good");
+
+        // Re-prompts until valid when invalid input is provided
+        let mut p = ScriptedPrompter::new(vec!["still/bad".into(), "".into(), "valid-tool".into()]);
+        let chosen = choose_name(Some("bad/name"), &["cand1".into(), "cand2".into()], &mut p);
+        assert_eq!(chosen, "valid-tool");
     }
 
     #[test]
