@@ -137,6 +137,8 @@ fn uninstall_all() {
     std::fs::write(&bashrc, bashrc_installed).unwrap();
 
     let deleted_file = home.join("old.txt");
+    let deleted_symlink = home.join("old_link");
+    let deleted_dir = home.join("old_dir");
 
     let applied = vec![
         Change {
@@ -194,6 +196,28 @@ fn uninstall_all() {
             link_target: None,
             origin: None,
         },
+        Change {
+            path: deleted_symlink.clone(),
+            kind: ChangeKind::Deleted,
+            entry: FileKind::Symlink,
+            size: 4,
+            mode: 0o777,
+            owner: (1000, 1000),
+            blob: None,
+            link_target: None,
+            origin: None,
+        },
+        Change {
+            path: deleted_dir.clone(),
+            kind: ChangeKind::Deleted,
+            entry: FileKind::Dir,
+            size: 0,
+            mode: 0o755,
+            owner: (1000, 1000),
+            blob: None,
+            link_target: None,
+            origin: None,
+        },
     ];
 
     let originals = vec![
@@ -209,6 +233,20 @@ fn uninstall_all() {
             kind: FileKind::File,
             mode: 0o640,
             content: Some(b"old content".to_vec()),
+            link_target: None,
+        },
+        Original {
+            path: deleted_symlink.clone(),
+            kind: FileKind::Symlink,
+            mode: 0o777,
+            content: None,
+            link_target: Some(PathBuf::from("tool")),
+        },
+        Original {
+            path: deleted_dir.clone(),
+            kind: FileKind::Dir,
+            mode: 0o755,
+            content: None,
             link_target: None,
         },
     ];
@@ -230,6 +268,18 @@ fn uninstall_all() {
     assert!(!created_symlink.exists());
     assert_eq!(std::fs::read(&bashrc).unwrap(), bashrc_orig);
     assert_eq!(std::fs::read(&deleted_file).unwrap(), b"old content");
+    assert!(deleted_symlink.is_symlink());
+    assert_eq!(
+        std::fs::read_link(&deleted_symlink).unwrap(),
+        PathBuf::from("tool")
+    );
+    assert!(deleted_dir.is_dir());
+    let dir_mode = std::fs::metadata(&deleted_dir)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(dir_mode, 0o755);
     use std::os::unix::fs::PermissionsExt;
     let mode = std::fs::metadata(&deleted_file)
         .unwrap()
@@ -292,6 +342,51 @@ fn revert_keeps_later_user_edits() {
 
     let expected = b"# my bashrc\nexport PATH=/bin\nalias x=y\n";
     assert_eq!(std::fs::read(&bashrc).unwrap(), expected);
+}
+
+#[test]
+fn revert_conflict_fails_and_reports() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+
+    let bashrc = home.join(".bashrc");
+    let bashrc_orig = b"# header\nold_line_1\nold_line_2\n";
+    let bashrc_installed = b"# header\ninstalled_line_1\ninstalled_line_2\n";
+    std::fs::write(&bashrc, bashrc_installed).unwrap();
+
+    let applied = vec![Change {
+        path: bashrc.clone(),
+        kind: ChangeKind::Modified,
+        entry: FileKind::File,
+        size: bashrc_installed.len() as u64,
+        mode: 0o644,
+        owner: (1000, 1000),
+        blob: Some(bashrc.clone()),
+        link_target: None,
+        origin: None,
+    }];
+
+    let originals = vec![Original {
+        path: bashrc.clone(),
+        kind: FileKind::File,
+        mode: 0o644,
+        content: Some(bashrc_orig.to_vec()),
+        link_target: None,
+    }];
+
+    let data = build("mytool", &applied, &originals, &[]).unwrap();
+    let script_content = render(&data).unwrap();
+    let script_path = home.join("uninstall-mytool.sh");
+    std::fs::write(&script_path, &script_content).unwrap();
+
+    std::fs::write(&bashrc, b"totally different content\n").unwrap();
+
+    let output = run_script(&script_path, "a\nn\n");
+    assert_eq!(output.status.code(), Some(2));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("conflict with the installer changes; cannot revert automatically"));
+    assert!(stdout.contains("conflicts with your edits"));
+    assert!(script_path.exists());
 }
 
 #[test]

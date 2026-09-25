@@ -5,7 +5,8 @@ set -u
 SCRIPT_PATH="$0"
 case "$SCRIPT_PATH" in
     /*) ;;
-    *) SCRIPT_PATH="$PWD/$SCRIPT_PATH" ;;
+    */*) SCRIPT_PATH="$PWD/$SCRIPT_PATH" ;;
+    *) SCRIPT_PATH="$(command -v "$SCRIPT_PATH" 2>/dev/null || printf '%s/%s' "$PWD" "$SCRIPT_PATH")" ;;
 esac
 
 # Create temporary directory
@@ -14,12 +15,13 @@ trap 'rm -rf "$TMPDIR"' EXIT INT TERM HUP
 
 # Function to compute sha256 hex
 hash_file() {
+    _hf_file="$1"
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" 2>/dev/null | cut -d' ' -f1
+        sha256sum "$_hf_file" 2>/dev/null | cut -d' ' -f1
     elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1
+        shasum -a 256 "$_hf_file" 2>/dev/null | cut -d' ' -f1
     elif command -v openssl >/dev/null 2>&1; then
-        openssl dgst -sha256 "$1" 2>/dev/null | awk '{print $NF}'
+        openssl dgst -sha256 "$_hf_file" 2>/dev/null | awk '{print $NF}'
     fi
 }
 
@@ -52,31 +54,31 @@ sed -n 's/^#@item	//p' "$SCRIPT_PATH" | awk '{ a[NR] = $0 } END { for (i = NR; i
 
 needs_sudo() {
     [ "$(id -u)" = "0" ] && return 1
-    target="$1"
-    if [ -e "$target" ] || [ -L "$target" ]; then
-        if [ ! -w "$target" ]; then
+    _ns_target="$1"
+    if [ -e "$_ns_target" ] || [ -L "$_ns_target" ]; then
+        if [ ! -w "$_ns_target" ]; then
             return 0
         fi
-        parent=$(dirname "$target")
-        if [ ! -w "$parent" ]; then
+        _ns_parent=$(dirname "$_ns_target")
+        if [ ! -w "$_ns_parent" ]; then
             return 0
         fi
         return 1
     else
-        p="$target"
-        while [ -n "$p" ] && [ ! -e "$p" ] && [ ! -L "$p" ]; do
-            parent=$(dirname "$p")
-            [ "$parent" = "$p" ] && break
-            p="$parent"
+        _ns_p="$_ns_target"
+        while [ -n "$_ns_p" ] && [ ! -e "$_ns_p" ] && [ ! -L "$_ns_p" ]; do
+            _ns_parent=$(dirname "$_ns_p")
+            [ "$_ns_parent" = "$_ns_p" ] && break
+            _ns_p="$_ns_parent"
         done
-        [ ! -w "$p" ]
+        [ ! -w "$_ns_p" ]
     fi
 }
 
 run_as() {
-    target="$1"
+    _ra_target="$1"
     shift
-    if needs_sudo "$target"; then
+    if needs_sudo "$_ra_target"; then
         sudo "$@"
     else
         "$@"
@@ -135,15 +137,14 @@ while IFS="$TAB" read -r kind f1 f2 f3 f4 rest; do
                 fi
             fi
             if [ "$patch_ok" -eq 1 ]; then
+                touch "$TMPDIR/patch_ok_$n"
                 desc="revert installer changes in $path"
                 printf '[%d] %s\n' "$n" "$desc"
                 diff -u "$path" "$tmp_patched" || true
             else
-                desc="revert installer changes in $path — your later edits conflict; the file would be restored to its pre-install state"
+                rm -f "$tmp_patched"
+                desc="revert installer changes in $path — your later edits conflict with the installer changes; cannot revert automatically"
                 printf '[%d] %s\n' "$n" "$desc"
-                if [ -f "$TMPDIR/blob_$blob" ]; then
-                    diff -u "$path" "$TMPDIR/blob_$blob" || true
-                fi
             fi
             ;;
         modified_restore)
@@ -280,10 +281,10 @@ while [ "$i" -le "$total" ]; do
             path="$f1"
             mode="$f4"
             tmp_patched="$TMPDIR/patch_tmp_$i"
-            if [ -f "$tmp_patched" ]; then
-                parent=$(dirname "$path")
-                if [ ! -d "$parent" ]; then
-                    run_as "$parent" mkdir -p "$parent" || true
+            if [ -f "$TMPDIR/patch_ok_$i" ] && [ -f "$tmp_patched" ]; then
+                item_parent=$(dirname "$path")
+                if [ ! -d "$item_parent" ]; then
+                    run_as "$item_parent" mkdir -p "$item_parent" || true
                 fi
                 if run_as "$path" cp "$tmp_patched" "$path" && run_as "$path" chmod "$mode" "$path"; then
                     : ok
@@ -292,7 +293,7 @@ while [ "$i" -le "$total" ]; do
                     has_failed=1
                 fi
             else
-                printf 'failed: [%d] %s\n' "$i" "$desc"
+                printf 'failed: [%d] revert installer changes in %s (conflicts with your edits)\n' "$i" "$path"
                 has_failed=1
             fi
             ;;
@@ -302,9 +303,9 @@ while [ "$i" -le "$total" ]; do
             mode="$f4"
             blob_file="$TMPDIR/blob_$blob"
             if [ -f "$blob_file" ]; then
-                parent=$(dirname "$path")
-                if [ ! -d "$parent" ]; then
-                    run_as "$parent" mkdir -p "$parent" || true
+                item_parent=$(dirname "$path")
+                if [ ! -d "$item_parent" ]; then
+                    run_as "$item_parent" mkdir -p "$item_parent" || true
                 fi
                 if run_as "$path" cp "$blob_file" "$path" && run_as "$path" chmod "$mode" "$path"; then
                     : ok
@@ -322,9 +323,9 @@ while [ "$i" -le "$total" ]; do
             blob="$f2"
             mode="$f3"
             blob_file="$TMPDIR/blob_$blob"
-            parent=$(dirname "$path")
-            if [ ! -d "$parent" ]; then
-                run_as "$parent" mkdir -p "$parent" || true
+            item_parent=$(dirname "$path")
+            if [ ! -d "$item_parent" ]; then
+                run_as "$item_parent" mkdir -p "$item_parent" || true
             fi
             if run_as "$path" cp "$blob_file" "$path" && run_as "$path" chmod "$mode" "$path"; then
                 : ok
@@ -335,12 +336,12 @@ while [ "$i" -le "$total" ]; do
             ;;
         deleted_symlink)
             path="$f1"
-            target="$f2"
-            parent=$(dirname "$path")
-            if [ ! -d "$parent" ]; then
-                run_as "$parent" mkdir -p "$parent" || true
+            symlink_target="$f2"
+            item_parent=$(dirname "$path")
+            if [ ! -d "$item_parent" ]; then
+                run_as "$item_parent" mkdir -p "$item_parent" || true
             fi
-            if run_as "$path" ln -s "$target" "$path"; then
+            if run_as "$path" ln -s "$symlink_target" "$path"; then
                 : ok
             else
                 printf 'failed: [%d] %s\n' "$i" "$desc"
