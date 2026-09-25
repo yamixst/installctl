@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use installctl::apply::Original;
 use installctl::changes::{Change, ChangeKind};
 use installctl::overlay::FileKind;
-use installctl::uninstall::{build, parse, render, Item, RenderError, UninstallData};
+use installctl::prompt::ScriptedPrompter;
+use installctl::uninstall::{
+    ask_location, build, merge, parse, render, write_script, Item, RenderError, UninstallData,
+};
 
 fn run_script_in(
     script: &Path,
@@ -633,4 +636,354 @@ fn action_items() {
     let log = std::fs::read_to_string(&log_file).expect("log file should exist");
     assert!(log.contains("--user disable a.service"));
     assert!(!log.contains("daemon-reload"));
+}
+
+#[test]
+fn merge_shifts_blobs_and_concatenates_items() {
+    let old = UninstallData {
+        name: "old_name".to_string(),
+        items: vec![Item::ModifiedPatch {
+            path: PathBuf::from("/etc/a"),
+            blob: 0,
+            installed_sha256: "hash1".to_string(),
+            mode: 0o644,
+        }],
+        blobs: vec![b"old_blob".to_vec()],
+    };
+    let new = UninstallData {
+        name: "new_name".to_string(),
+        items: vec![
+            Item::ModifiedRestore {
+                path: PathBuf::from("/etc/b"),
+                blob: 0,
+                installed_sha256: "hash2".to_string(),
+                mode: 0o600,
+            },
+            Item::DeletedFile {
+                path: PathBuf::from("/etc/c"),
+                blob: 1,
+                mode: 0o644,
+            },
+        ],
+        blobs: vec![b"new_blob1".to_vec(), b"new_blob2".to_vec()],
+    };
+    let merged = merge(old, new);
+    assert_eq!(merged.name, "new_name");
+    assert_eq!(
+        merged.blobs,
+        vec![
+            b"old_blob".to_vec(),
+            b"new_blob1".to_vec(),
+            b"new_blob2".to_vec()
+        ]
+    );
+    assert_eq!(merged.items.len(), 3);
+    match &merged.items[0] {
+        Item::ModifiedPatch { blob, .. } => assert_eq!(*blob, 0),
+        _ => panic!("unexpected item 0"),
+    }
+    match &merged.items[1] {
+        Item::ModifiedRestore { blob, .. } => assert_eq!(*blob, 1),
+        _ => panic!("unexpected item 1"),
+    }
+    match &merged.items[2] {
+        Item::DeletedFile { blob, .. } => assert_eq!(*blob, 2),
+        _ => panic!("unexpected item 2"),
+    }
+}
+
+#[test]
+fn merge_then_uninstall_removes_everything() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+
+    let bin_dir = home.join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let app_bin = bin_dir.join("app");
+    std::fs::write(&app_bin, b"v1\0").unwrap();
+
+    let applied_v1 = vec![Change {
+        path: app_bin.clone(),
+        kind: ChangeKind::Created,
+        entry: FileKind::File,
+        size: 3,
+        mode: 0o755,
+        owner: (1000, 1000),
+        blob: Some(app_bin.clone()),
+        link_target: None,
+        origin: None,
+    }];
+    let data_v1 = build("app", &applied_v1, &[], &[]).unwrap();
+    let mut p1 = ScriptedPrompter::new(vec![]);
+    let script_path = write_script(home, data_v1, &mut p1).unwrap();
+    assert_eq!(script_path, home.join("uninstall-app.sh"));
+    assert!(script_path.exists());
+
+    // Install v2
+    let share_dir = home.join("share/app");
+    std::fs::create_dir_all(&share_dir).unwrap();
+    let share_new = share_dir.join("new");
+    std::fs::write(&share_new, b"new-file-content").unwrap();
+    std::fs::write(&app_bin, b"v2\0").unwrap();
+
+    let applied_v2 = vec![
+        Change {
+            path: app_bin.clone(),
+            kind: ChangeKind::Modified,
+            entry: FileKind::File,
+            size: 3,
+            mode: 0o755,
+            owner: (1000, 1000),
+            blob: Some(app_bin.clone()),
+            link_target: None,
+            origin: None,
+        },
+        Change {
+            path: share_dir.clone(),
+            kind: ChangeKind::Created,
+            entry: FileKind::Dir,
+            size: 0,
+            mode: 0o755,
+            owner: (1000, 1000),
+            blob: None,
+            link_target: None,
+            origin: None,
+        },
+        Change {
+            path: share_new.clone(),
+            kind: ChangeKind::Created,
+            entry: FileKind::File,
+            size: 16,
+            mode: 0o644,
+            owner: (1000, 1000),
+            blob: Some(share_new.clone()),
+            link_target: None,
+            origin: None,
+        },
+    ];
+
+    let originals_v2 = vec![Original {
+        path: app_bin.clone(),
+        kind: FileKind::File,
+        mode: 0o755,
+        content: Some(b"v1\0".to_vec()),
+        link_target: None,
+    }];
+
+    let data_v2 = build("app", &applied_v2, &originals_v2, &[]).unwrap();
+    assert!(matches!(data_v2.items[0], Item::ModifiedRestore { .. }));
+
+    let mut p2 = ScriptedPrompter::new(vec!["m".to_string()]);
+    let script_path2 = write_script(home, data_v2, &mut p2).unwrap();
+    assert_eq!(script_path2, script_path);
+
+    // Run merged script with 'a'
+    let output = run_script(&script_path, "a\n");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(!app_bin.exists(), "app binary should be removed");
+    assert!(!share_new.exists(), "share/app/new should be removed");
+    assert!(!share_dir.exists(), "share/app directory should be removed");
+    assert!(!script_path.exists(), "uninstall script should be removed");
+}
+
+#[test]
+fn update_only_keeps_previous() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+
+    let bin_dir = home.join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let app_bin = bin_dir.join("app");
+    std::fs::write(&app_bin, b"v1\0").unwrap();
+
+    let applied_v1 = vec![Change {
+        path: app_bin.clone(),
+        kind: ChangeKind::Created,
+        entry: FileKind::File,
+        size: 3,
+        mode: 0o755,
+        owner: (1000, 1000),
+        blob: Some(app_bin.clone()),
+        link_target: None,
+        origin: None,
+    }];
+    let data_v1 = build("app", &applied_v1, &[], &[]).unwrap();
+    let mut p1 = ScriptedPrompter::new(vec![]);
+    let script_path = write_script(home, data_v1, &mut p1).unwrap();
+    assert!(script_path.exists());
+
+    // Install v2
+    let share_dir = home.join("share/app");
+    std::fs::create_dir_all(&share_dir).unwrap();
+    let share_new = share_dir.join("new");
+    std::fs::write(&share_new, b"new-file-content").unwrap();
+    std::fs::write(&app_bin, b"v2\0").unwrap();
+
+    let applied_v2 = vec![
+        Change {
+            path: app_bin.clone(),
+            kind: ChangeKind::Modified,
+            entry: FileKind::File,
+            size: 3,
+            mode: 0o755,
+            owner: (1000, 1000),
+            blob: Some(app_bin.clone()),
+            link_target: None,
+            origin: None,
+        },
+        Change {
+            path: share_dir.clone(),
+            kind: ChangeKind::Created,
+            entry: FileKind::Dir,
+            size: 0,
+            mode: 0o755,
+            owner: (1000, 1000),
+            blob: None,
+            link_target: None,
+            origin: None,
+        },
+        Change {
+            path: share_new.clone(),
+            kind: ChangeKind::Created,
+            entry: FileKind::File,
+            size: 16,
+            mode: 0o644,
+            owner: (1000, 1000),
+            blob: Some(share_new.clone()),
+            link_target: None,
+            origin: None,
+        },
+    ];
+
+    let originals_v2 = vec![Original {
+        path: app_bin.clone(),
+        kind: FileKind::File,
+        mode: 0o755,
+        content: Some(b"v1\0".to_vec()),
+        link_target: None,
+    }];
+
+    let data_v2 = build("app", &applied_v2, &originals_v2, &[]).unwrap();
+
+    let mut p2 = ScriptedPrompter::new(vec!["u".to_string()]);
+    let script_path2 = write_script(home, data_v2, &mut p2).unwrap();
+    assert_eq!(script_path2, script_path);
+
+    // Two scripts should exist: uninstall-app.sh and uninstall-app.prev-<timestamp>.sh
+    let entries: Vec<PathBuf> = std::fs::read_dir(home)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("uninstall-app") && n.ends_with(".sh"))
+                .unwrap_or(false)
+        })
+        .collect();
+    assert_eq!(entries.len(), 2, "expected 2 scripts, got: {:?}", entries);
+    let prev_script = entries.into_iter().find(|p| p != &script_path).unwrap();
+    assert!(
+        prev_script
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains(".prev-"),
+        "expected backup script name to contain .prev-, got: {:?}",
+        prev_script
+    );
+
+    // Running the new one restores bin/app to "v1"
+    let output = run_script(&script_path, "a\n");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(std::fs::read(&app_bin).unwrap(), b"v1\0");
+    assert!(!share_new.exists());
+    assert!(!share_dir.exists());
+    assert!(!script_path.exists());
+    assert!(prev_script.exists());
+}
+
+#[test]
+fn unparseable_existing_is_kept() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+
+    let script_path = home.join("uninstall-garbage.sh");
+    let garbage_content = "this is not an installctl uninstall script\nrandom garbage\n";
+    std::fs::write(&script_path, garbage_content).unwrap();
+
+    let data = UninstallData {
+        name: "garbage".to_string(),
+        items: vec![Item::CreatedDir {
+            path: home.join("some_dir"),
+        }],
+        blobs: vec![],
+    };
+
+    let mut p = ScriptedPrompter::new(vec![]);
+    let new_script_path = write_script(home, data.clone(), &mut p).unwrap();
+    assert_eq!(new_script_path, script_path);
+
+    // Verify new script is valid
+    let content = std::fs::read_to_string(&script_path).unwrap();
+    let parsed = parse(&content).expect("new script should be parseable");
+    assert_eq!(parsed, data);
+
+    // Find the backup script
+    let entries: Vec<PathBuf> = std::fs::read_dir(home)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("uninstall-garbage.prev-") && n.ends_with(".sh"))
+                .unwrap_or(false)
+        })
+        .collect();
+    assert_eq!(entries.len(), 1, "expected 1 backup script, got: {:?}", entries);
+    let backup_content = std::fs::read_to_string(&entries[0]).unwrap();
+    assert_eq!(backup_content, garbage_content);
+}
+
+#[test]
+fn ask_location_behavior() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+
+    // 1. Default input ("") -> ~/.local/bin
+    let mut p1 = ScriptedPrompter::new(vec!["".to_string()]);
+    let loc1 = ask_location(&mut p1, home);
+    assert_eq!(loc1, home.join(".local/bin"));
+    assert!(loc1.is_dir());
+
+    // 2. Tilde expansion ("~") -> home
+    let mut p2 = ScriptedPrompter::new(vec!["~".to_string()]);
+    let loc2 = ask_location(&mut p2, home);
+    assert_eq!(loc2, home);
+
+    // 3. Subdir with tilde ("~/custom/bin")
+    let mut p3 = ScriptedPrompter::new(vec!["~/custom/bin".to_string()]);
+    let loc3 = ask_location(&mut p3, home);
+    assert_eq!(loc3, home.join("custom/bin"));
+    assert!(loc3.is_dir());
+
+    // 4. Invalid path (existing regular file, cannot mkdir under it)
+    let regular_file = home.join("not_a_dir");
+    std::fs::write(&regular_file, b"hello").unwrap();
+    let invalid_path = regular_file.join("sub").to_str().unwrap().to_string();
+
+    let mut p4 = ScriptedPrompter::new(vec![invalid_path, "~/retry_dir".to_string()]);
+    let loc4 = ask_location(&mut p4, home);
+    assert_eq!(loc4, home.join("retry_dir"));
+    assert!(loc4.is_dir());
 }

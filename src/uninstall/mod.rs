@@ -10,6 +10,7 @@ use crate::apply::Original;
 use crate::changes::{Change, ChangeKind};
 use crate::control::{ActionRecord, Decision};
 use crate::overlay::FileKind;
+use crate::prompt::Prompter;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Item {
@@ -553,4 +554,140 @@ pub fn parse(script: &str) -> Result<UninstallData, String> {
     }
 
     Ok(UninstallData { name, items, blobs })
+}
+
+fn is_writable(p: &Path) -> bool {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    if let Ok(c) = CString::new(p.as_os_str().as_bytes()) {
+        unsafe { libc::access(c.as_ptr(), libc::W_OK) == 0 }
+    } else {
+        false
+    }
+}
+
+fn current_timestamp() -> String {
+    unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        format!(
+            "{:04}{:02}{:02}{:02}{:02}{:02}",
+            tm.tm_year + 1900,
+            tm.tm_mon + 1,
+            tm.tm_mday,
+            tm.tm_hour,
+            tm.tm_min,
+            tm.tm_sec
+        )
+    }
+}
+
+pub fn merge(old: UninstallData, new: UninstallData) -> UninstallData {
+    let shift = old.blobs.len();
+    let mut items = old.items;
+    for mut item in new.items {
+        match &mut item {
+            Item::ModifiedPatch { blob, .. }
+            | Item::ModifiedRestore { blob, .. }
+            | Item::DeletedFile { blob, .. } => {
+                *blob += shift;
+            }
+            _ => {}
+        }
+        items.push(item);
+    }
+    let mut blobs = old.blobs;
+    blobs.extend(new.blobs);
+
+    UninstallData {
+        name: new.name,
+        items,
+        blobs,
+    }
+}
+
+pub fn write_script(
+    dir: &Path,
+    mut data: UninstallData,
+    p: &mut dyn Prompter,
+) -> anyhow::Result<PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let target = dir.join(format!("uninstall-{}.sh", data.name));
+
+    if target.symlink_metadata().is_ok() {
+        let parse_result = std::fs::read_to_string(&target)
+            .map_err(|e| e.to_string())
+            .and_then(|c| parse(&c));
+        match parse_result {
+            Ok(old) => {
+                let choice = p.choose(
+                    &format!("An uninstall script for {} already exists.", data.name),
+                    &[
+                        (
+                            'm',
+                            "merge: the uninstall script will remove the program completely",
+                        ),
+                        (
+                            'u',
+                            "update only: new script undoes just this update; the old one is kept as uninstall-<name>.prev-<YYYYmmddHHMMSS>.sh",
+                        ),
+                    ],
+                );
+                if choice == 'm' {
+                    data = merge(old, data);
+                } else {
+                    let ts = current_timestamp();
+                    let backup = dir.join(format!("uninstall-{}.prev-{}.sh", data.name, ts));
+                    std::fs::rename(&target, &backup)?;
+                }
+            }
+            Err(_) => {
+                let ts = current_timestamp();
+                let backup = dir.join(format!("uninstall-{}.prev-{}.sh", data.name, ts));
+                std::fs::rename(&target, &backup)?;
+                p.say(&format!(
+                    "Existing uninstall script could not be parsed and was backed up as {}",
+                    backup.display()
+                ));
+            }
+        }
+    }
+
+    let rendered = render(&data).map_err(|e| anyhow::anyhow!("{e}"))?;
+    std::fs::write(&target, rendered)?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))?;
+
+    Ok(target)
+}
+
+pub fn ask_location(p: &mut dyn Prompter, home: &Path) -> PathBuf {
+    loop {
+        let ans = p.input("Where should uninstall-<name>.sh go?", Some("~/.local/bin"));
+        let path = if ans == "~" {
+            home.to_path_buf()
+        } else if let Some(rest) = ans.strip_prefix("~/") {
+            home.join(rest)
+        } else {
+            PathBuf::from(ans)
+        };
+
+        if let Err(e) = std::fs::create_dir_all(&path) {
+            p.say(&format!("Cannot create directory {}: {}", path.display(), e));
+            continue;
+        }
+
+        if !path.is_dir() {
+            p.say(&format!("Not a directory: {}", path.display()));
+            continue;
+        }
+
+        if !is_writable(&path) {
+            p.say(&format!("Directory is not writable: {}", path.display()));
+            continue;
+        }
+
+        return path;
+    }
 }
