@@ -11,6 +11,7 @@ pub mod report;
 pub mod sandbox;
 pub mod shim;
 pub mod staging;
+pub mod uninstall;
 
 pub use control::{ActionController, ActionRecord, ActionRequest, Decision, run_on_host};
 pub use prompt::Prompter;
