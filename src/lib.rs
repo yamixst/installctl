@@ -1,6 +1,8 @@
 pub mod actions;
+pub mod app;
 pub mod apply;
 pub mod changes;
+pub mod cli;
 pub mod control;
 pub mod ipc;
 pub mod naming;
@@ -18,6 +20,8 @@ pub use prompt::Prompter;
 pub use sandbox::SANDBOX_RUN_DIR;
 pub use shim::SudoRequest;
 
+use clap::Parser;
+
 pub fn main_entry() -> i32 {
     let args: Vec<String> = std::env::args().collect();
     let argv0 = args.first().map(|s| s.as_str()).unwrap_or_default();
@@ -29,20 +33,21 @@ pub fn main_entry() -> i32 {
     match basename {
         "sudo" => shim::sudo_main(),
         "installctl" | "" => {
-            if let Some(pos) = args.iter().position(|a| a == "--apply-helper") {
-                if let Some(plan_str) = args.get(pos + 1) {
-                    let plan = std::path::Path::new(plan_str);
-                    if let Err(e) = apply::helper_main(plan) {
-                        eprintln!("installctl helper error: {e:#}");
-                        return 1;
-                    }
-                    return 0;
-                } else {
-                    eprintln!("installctl: missing plan argument for --apply-helper");
+            let parsed = match cli::Args::try_parse_from(&args) {
+                Ok(p) => p,
+                Err(e) => {
+                    let _ = e.print();
+                    return e.exit_code();
+                }
+            };
+            if let Some(plan) = parsed.apply_helper {
+                if let Err(e) = apply::helper_main(&plan) {
+                    eprintln!("installctl helper error: {e:#}");
                     return 1;
                 }
+                return 0;
             }
-            0
+            app::run(parsed)
         }
         _ => shim::action_main(),
     }
