@@ -411,3 +411,46 @@ fn e2e_missing_prereq_exit_3() {
         "expected output to mention /dev/fuse, got: {combined}"
     );
 }
+
+#[test]
+fn e2e_preserve_arguments_with_spaces() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if !priv_env() {
+        return;
+    }
+
+    let (_temp_home, home) = create_test_home();
+    let answers_path = create_answers_file(&home, &["a", "n"]);
+
+    let bin = installctl_bin();
+    let output = std::process::Command::new(&bin)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .env("HOME", &home)
+        .env("INSTALLCTL_TEST_ANSWERS", &answers_path)
+        .args([
+            "--name",
+            "spacetest",
+            "sh",
+            "-c",
+            "touch \"$HOME/$1\"",
+            "_",
+            "arg with spaces",
+        ])
+        .output()
+        .expect("run installctl");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "installctl failed.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+    );
+
+    let target_file = home.join("arg with spaces");
+    assert!(
+        target_file.is_file(),
+        "file with spaces should exist at {}",
+        target_file.display()
+    );
+}

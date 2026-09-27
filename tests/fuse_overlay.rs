@@ -1,12 +1,5 @@
 mod common;
 
-use std::fs;
-use std::io::{IoSlice, IoSliceMut, Write};
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::process::{Command, exit};
-use std::sync::{Arc, Mutex};
 use nix::sched::{CloneFlags, unshare};
 use nix::sys::socket::{
     AddressFamily, ControlMessage, ControlMessageOwned, MsgFlags, SockFlag, SockType, recvmsg,
@@ -14,6 +7,13 @@ use nix::sys::socket::{
 };
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::{ForkResult, fork, getegid, geteuid};
+use std::fs;
+use std::io::{IoSlice, IoSliceMut, Write};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, exit};
+use std::sync::{Arc, Mutex};
 
 use installctl::overlay::Overlay;
 use installctl::overlay::fuse::{mount_fuse_fd, new_fs, serve};
@@ -50,8 +50,7 @@ fn in_userns_with_mount<F: FnOnce(&Path)>(lower: &Path, f: F) -> MountContext {
         ForkResult::Child => {
             drop(sock_parent);
 
-            unshare(CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS)
-                .expect("unshare failed");
+            unshare(CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS).expect("unshare failed");
 
             fs::write("/proc/self/setgroups", "deny").expect("write setgroups");
             fs::write("/proc/self/uid_map", format!("0 {uid} 1\n")).expect("write uid_map");
@@ -172,11 +171,20 @@ fn fuse_basic_ops() {
 
     fs::write(lower.join("to_read.txt"), "hello from lower\n").unwrap();
     fs::write(lower.join("to_append.txt"), "initial\n").unwrap();
-    fs::set_permissions(lower.join("to_append.txt"), fs::Permissions::from_mode(0o666)).unwrap();
+    fs::set_permissions(
+        lower.join("to_append.txt"),
+        fs::Permissions::from_mode(0o666),
+    )
+    .unwrap();
     fs::write(lower.join("to_delete.txt"), "delete me\n").unwrap();
 
-    let _ = Command::new("sudo").args(["chown", "-R", "0:0"]).arg(lower).status();
-    let _ = Command::new("sudo").args(["chmod", "777", lower.to_str().unwrap()]).status();
+    let _ = Command::new("sudo")
+        .args(["chown", "-R", "0:0"])
+        .arg(lower)
+        .status();
+    let _ = Command::new("sudo")
+        .args(["chmod", "777", lower.to_str().unwrap()])
+        .status();
 
     let ctx = in_userns_with_mount(lower, |mount| {
         // 1. Read lower file
@@ -271,8 +279,13 @@ fn fuse_mv_lower_dir_falls_back() {
     fs::write(sub.join("file1.txt"), "file1 content\n").unwrap();
     fs::write(sub.join("file2.txt"), "file2 content\n").unwrap();
 
-    let _ = Command::new("sudo").args(["chown", "-R", "0:0"]).arg(lower).status();
-    let _ = Command::new("sudo").args(["chmod", "777", lower.to_str().unwrap()]).status();
+    let _ = Command::new("sudo")
+        .args(["chown", "-R", "0:0"])
+        .arg(lower)
+        .status();
+    let _ = Command::new("sudo")
+        .args(["chmod", "777", lower.to_str().unwrap()])
+        .status();
 
     let _ctx = in_userns_with_mount(lower, |mount| {
         let src = mount.join("orig_dir");

@@ -1,12 +1,14 @@
+use nix::mount::{MntFlags, MsFlags, mount, umount2};
+use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::unistd::{
+    ForkResult, Gid, Pid, Uid, chdir, fork, pivot_root, setgroups, setresgid, setresuid,
+};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
-use nix::mount::{mount, umount2, MntFlags, MsFlags};
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::{chdir, fork, pivot_root, setgroups, setresgid, setresuid, ForkResult, Gid, Pid, Uid};
 
 use crate::ipc::{self, ExitStatus, InitEvent, Leftover};
 use crate::overlay::fuse::mount_fuse_fd;
@@ -206,10 +208,7 @@ fn run_init_inner(cfg: &SandboxConfig, ctl_i: &UnixStream) -> anyhow::Result<()>
             break code;
         }
 
-        let mut poll_fds = [PollFd::new(
-            sudo_listener.as_fd(),
-            PollFlags::POLLIN,
-        )];
+        let mut poll_fds = [PollFd::new(sudo_listener.as_fd(), PollFlags::POLLIN)];
         let _ = poll(&mut poll_fds, PollTimeout::from(50u16));
 
         if let Some(revents) = poll_fds[0].revents()
@@ -235,18 +234,31 @@ fn run_init_inner(cfg: &SandboxConfig, ctl_i: &UnixStream) -> anyhow::Result<()>
 
                                 if req.preserve_env {
                                     for (k, _) in std::env::vars() {
-                                        unsafe { std::env::remove_var(k); }
+                                        unsafe {
+                                            std::env::remove_var(k);
+                                        }
                                     }
                                     for (k, v) in &req.env {
-                                        unsafe { std::env::set_var(k, v); }
+                                        unsafe {
+                                            std::env::set_var(k, v);
+                                        }
                                     }
                                 } else {
-                                    let term = req.env.iter().find(|(k, _)| k == "TERM").map(|(_, v)| v.clone());
+                                    let term = req
+                                        .env
+                                        .iter()
+                                        .find(|(k, _)| k == "TERM")
+                                        .map(|(_, v)| v.clone());
                                     for (k, _) in std::env::vars() {
-                                        unsafe { std::env::remove_var(k); }
+                                        unsafe {
+                                            std::env::remove_var(k);
+                                        }
                                     }
                                     unsafe {
-                                        std::env::set_var("PATH", "/run/installctl/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+                                        std::env::set_var(
+                                            "PATH",
+                                            "/run/installctl/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                                        );
                                         std::env::set_var("HOME", "/root");
                                         std::env::set_var("USER", "root");
                                         std::env::set_var("LOGNAME", "root");
@@ -285,6 +297,7 @@ fn run_init_inner(cfg: &SandboxConfig, ctl_i: &UnixStream) -> anyhow::Result<()>
                                     .collect();
 
                                 let _ = nix::unistd::execvp(&c_cmd, &c_args);
+                                eprintln!("sudo: {}: command not found", req.argv[0]);
                                 unsafe { libc::_exit(127) };
                             }
                             Ok(ForkResult::Parent { child }) => {
@@ -336,7 +349,14 @@ fn run_init_inner(cfg: &SandboxConfig, ctl_i: &UnixStream) -> anyhow::Result<()>
     }
     leftovers.sort_by_key(|l| l.pid);
 
-    let _ = ipc::send_msg(ctl_i, &InitEvent::Finished { exit_code, leftovers }, &[]);
+    let _ = ipc::send_msg(
+        ctl_i,
+        &InitEvent::Finished {
+            exit_code,
+            leftovers,
+        },
+        &[],
+    );
     unsafe {
         libc::kill(-1, libc::SIGKILL);
         libc::_exit(0);

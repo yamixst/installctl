@@ -16,7 +16,7 @@ use fuser::{
     ReplyWrite, ReplyXattr, Request, Session, SessionACL, TimeOrNow, WriteFlags,
 };
 
-use crate::overlay::{normalize_path, Attr, FileKind, Overlay, RenameFlags, SetAttr};
+use crate::overlay::{Attr, FileKind, Overlay, RenameFlags, SetAttr, normalize_path};
 
 const TTL: Duration = Duration::from_secs(1);
 
@@ -88,18 +88,17 @@ pub fn mount_fuse_fd(mountpoint: &Path) -> io::Result<OwnedFd> {
         .open("/dev/fuse")?;
     let fd = OwnedFd::from(file);
 
-    let source = CString::new("installctl")
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    let source =
+        CString::new("installctl").map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     let target = CString::new(mountpoint.as_os_str().as_bytes())
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-    let fstype = CString::new("fuse")
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    let fstype =
+        CString::new("fuse").map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     let opts = format!(
         "fd={},rootmode=40000,user_id=0,group_id=0,allow_other,default_permissions",
         fd.as_raw_fd()
     );
-    let data = CString::new(opts)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    let data = CString::new(opts).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
     let res = unsafe {
         libc::mount(

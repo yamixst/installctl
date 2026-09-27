@@ -5,7 +5,7 @@ use installctl::changes::{Change, ChangeKind};
 use installctl::overlay::FileKind;
 use installctl::prompt::ScriptedPrompter;
 use installctl::uninstall::{
-    ask_location, build, merge, parse, render, write_script, Item, RenderError, UninstallData,
+    Item, RenderError, UninstallData, ask_location, build, merge, parse, render, write_script,
 };
 
 fn run_script_in(
@@ -950,7 +950,12 @@ fn unparseable_existing_is_kept() {
                 .unwrap_or(false)
         })
         .collect();
-    assert_eq!(entries.len(), 1, "expected 1 backup script, got: {:?}", entries);
+    assert_eq!(
+        entries.len(),
+        1,
+        "expected 1 backup script, got: {:?}",
+        entries
+    );
     let backup_content = std::fs::read_to_string(&entries[0]).unwrap();
     assert_eq!(backup_content, garbage_content);
 }

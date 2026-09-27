@@ -1,7 +1,7 @@
+use crate::prereq::UserInfo;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::prereq::UserInfo;
 
 #[derive(Debug)]
 pub struct StagingDir {

@@ -24,7 +24,8 @@ mod tests {
 
     #[test]
     fn parse_command_with_name() {
-        let args = Args::try_parse_from(["installctl", "--name", "myapp", "sh", "install.sh"]).unwrap();
+        let args =
+            Args::try_parse_from(["installctl", "--name", "myapp", "sh", "install.sh"]).unwrap();
         assert_eq!(args.name.as_deref(), Some("myapp"));
         assert_eq!(args.command, vec!["sh", "install.sh"]);
         assert!(args.apply_helper.is_none());
@@ -32,7 +33,8 @@ mod tests {
 
     #[test]
     fn parse_apply_helper() {
-        let args = Args::try_parse_from(["installctl", "--apply-helper", "/tmp/plan.json"]).unwrap();
+        let args =
+            Args::try_parse_from(["installctl", "--apply-helper", "/tmp/plan.json"]).unwrap();
         assert_eq!(args.apply_helper, Some(PathBuf::from("/tmp/plan.json")));
         assert!(args.command.is_empty());
     }

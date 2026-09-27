@@ -248,7 +248,10 @@ pub fn apply(changes: &[Change], root: &Path, as_root: bool) -> io::Result<()> {
     for change in files_and_symlinks {
         let target = resolve_path(root, &change.path);
         let dir = target.parent().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "target has no parent directory")
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target has no parent directory",
+            )
         })?;
         if !dir.exists() {
             std::fs::create_dir_all(dir)?;
@@ -296,6 +299,7 @@ pub fn apply(changes: &[Change], root: &Path, as_root: bool) -> io::Result<()> {
             }
         } else {
             let write_file = || -> io::Result<()> {
+                let _ = std::fs::remove_file(&tmp_path);
                 let mut tmp_file = std::fs::File::create(&tmp_path)?;
                 if let Some(ref blob_path) = change.blob {
                     let mut blob_file = std::fs::File::open(blob_path)?;
@@ -411,8 +415,9 @@ pub fn apply_root_part(
     }
 
     let orig_path = originals_path(&plan_path);
-    let orig_json = std::fs::read_to_string(&orig_path)
-        .map_err(|e| anyhow::anyhow!("failed to read originals file {}: {e}", orig_path.display()))?;
+    let orig_json = std::fs::read_to_string(&orig_path).map_err(|e| {
+        anyhow::anyhow!("failed to read originals file {}: {e}", orig_path.display())
+    })?;
     let originals: Vec<Original> = serde_json::from_str(&orig_json)?;
     Ok(originals)
 }
@@ -425,7 +430,10 @@ mod tests {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     fn sudo_env() -> bool {
-        let reason = match std::process::Command::new("sudo").args(["-n", "true"]).status() {
+        let reason = match std::process::Command::new("sudo")
+            .args(["-n", "true"])
+            .status()
+        {
             Ok(s) if s.success() => return true,
             Ok(s) => format!("sudo -n true exited with {s}"),
             Err(e) => format!("failed to execute sudo: {e}"),
@@ -512,7 +520,11 @@ mod tests {
         fs::create_dir(root.join("del_dir")).unwrap();
         fs::set_permissions(root.join("del_dir"), fs::Permissions::from_mode(0o755)).unwrap();
         fs::write(root.join("del_dir/child.txt"), b"child content").unwrap();
-        fs::set_permissions(root.join("del_dir/child.txt"), fs::Permissions::from_mode(0o644)).unwrap();
+        fs::set_permissions(
+            root.join("del_dir/child.txt"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
 
         // Staged blobs
         let create_blob = blob.join("created.blob");
@@ -630,30 +642,48 @@ mod tests {
         let created_path = root.join("created_file.sh");
         assert!(created_path.is_file());
         assert_eq!(fs::read(&created_path).unwrap(), b"#!/bin/sh\necho hello\n");
-        assert_eq!(fs::symlink_metadata(&created_path).unwrap().mode() & 0o777, 0o755);
+        assert_eq!(
+            fs::symlink_metadata(&created_path).unwrap().mode() & 0o777,
+            0o755
+        );
 
         // Verify created symlink
         let created_link_path = root.join("created_link");
-        assert_eq!(fs::read_link(&created_link_path).unwrap(), Path::new("created_file.sh"));
+        assert_eq!(
+            fs::read_link(&created_link_path).unwrap(),
+            Path::new("created_file.sh")
+        );
 
         // Verify created dir and inner file
         let created_dir_path = root.join("created_dir");
         assert!(created_dir_path.is_dir());
-        assert_eq!(fs::symlink_metadata(&created_dir_path).unwrap().mode() & 0o777, 0o755);
+        assert_eq!(
+            fs::symlink_metadata(&created_dir_path).unwrap().mode() & 0o777,
+            0o755
+        );
         let inner_path = created_dir_path.join("inner.txt");
         assert!(inner_path.is_file());
         assert_eq!(fs::read(&inner_path).unwrap(), b"inner content");
-        assert_eq!(fs::symlink_metadata(&inner_path).unwrap().mode() & 0o777, 0o644);
+        assert_eq!(
+            fs::symlink_metadata(&inner_path).unwrap().mode() & 0o777,
+            0o644
+        );
 
         // Verify modified file
         let mod_path = root.join("mod_file.txt");
         assert!(mod_path.is_file());
         assert_eq!(fs::read(&mod_path).unwrap(), b"new mod content");
-        assert_eq!(fs::symlink_metadata(&mod_path).unwrap().mode() & 0o777, 0o700);
+        assert_eq!(
+            fs::symlink_metadata(&mod_path).unwrap().mode() & 0o777,
+            0o700
+        );
 
         // Verify modified symlink
         let mod_link_path = root.join("link_mod");
-        assert_eq!(fs::read_link(&mod_link_path).unwrap(), Path::new("mod_file.txt"));
+        assert_eq!(
+            fs::read_link(&mod_link_path).unwrap(),
+            Path::new("mod_file.txt")
+        );
 
         // Verify deleted entries are gone
         assert!(!root.join("del_file.txt").exists());
@@ -661,7 +691,10 @@ mod tests {
         assert!(!root.join("del_dir").exists());
 
         // Verify no temp files left
-        assert!(!has_installctl_tmp_files(root), "found dangling .installctl-tmp files");
+        assert!(
+            !has_installctl_tmp_files(root),
+            "found dangling .installctl-tmp files"
+        );
     }
 
     #[test]
@@ -769,13 +802,19 @@ mod tests {
         let originals = capture_originals(&changes, root).unwrap();
         assert_eq!(originals.len(), 2);
 
-        let mod_orig = originals.iter().find(|o| o.path == Path::new("/mod.txt")).unwrap();
+        let mod_orig = originals
+            .iter()
+            .find(|o| o.path == Path::new("/mod.txt"))
+            .unwrap();
         assert_eq!(mod_orig.kind, FileKind::File);
         assert_eq!(mod_orig.mode, 0o644);
         assert_eq!(mod_orig.content.as_deref(), Some(b"before-mod".as_slice()));
         assert_eq!(mod_orig.link_target, None);
 
-        let del_orig = originals.iter().find(|o| o.path == Path::new("/del.txt")).unwrap();
+        let del_orig = originals
+            .iter()
+            .find(|o| o.path == Path::new("/del.txt"))
+            .unwrap();
         assert_eq!(del_orig.kind, FileKind::File);
         assert_eq!(del_orig.mode, 0o755);
         assert_eq!(del_orig.content.as_deref(), Some(b"before-del".as_slice()));
@@ -818,26 +857,50 @@ mod tests {
 
         let exe = find_installctl();
         let status = std::process::Command::new("sudo")
-            .args(["--", exe.to_str().unwrap(), "--apply-helper", plan_path.to_str().unwrap()])
+            .args([
+                "--",
+                exe.to_str().unwrap(),
+                "--apply-helper",
+                plan_path.to_str().unwrap(),
+            ])
             .status()
             .expect("run sudo installctl --apply-helper");
 
-        assert!(status.success(), "sudo helper exited with failure: {status}");
+        assert!(
+            status.success(),
+            "sudo helper exited with failure: {status}"
+        );
 
         // Target file must exist, owned 0:0, mode 04755 (verifying SUID bit preserved after fchown)
         let meta = fs::symlink_metadata(target_path).expect("/usr/local/bin/t must exist");
         assert_eq!(meta.uid(), 0, "target file must be owned by root uid 0");
         assert_eq!(meta.gid(), 0, "target file must be owned by root gid 0");
-        assert_eq!(meta.mode() & 0o7777, 0o4755, "target file mode must be 04755 with SUID preserved");
+        assert_eq!(
+            meta.mode() & 0o7777,
+            0o4755,
+            "target file mode must be 04755 with SUID preserved"
+        );
 
         // Originals file must exist and be owned by tester
         let orig_path = originals_path(&plan_path);
-        assert!(orig_path.is_file(), "originals file must exist at {}", orig_path.display());
+        assert!(
+            orig_path.is_file(),
+            "originals file must exist at {}",
+            orig_path.display()
+        );
         let orig_meta = fs::symlink_metadata(&orig_path).unwrap();
         let caller_uid = nix::unistd::getuid().as_raw();
         let caller_gid = nix::unistd::getgid().as_raw();
-        assert_eq!(orig_meta.uid(), caller_uid, "originals file must be owned by caller uid");
-        assert_eq!(orig_meta.gid(), caller_gid, "originals file must be owned by caller gid");
+        assert_eq!(
+            orig_meta.uid(),
+            caller_uid,
+            "originals file must be owned by caller uid"
+        );
+        assert_eq!(
+            orig_meta.gid(),
+            caller_gid,
+            "originals file must be owned by caller gid"
+        );
 
         // Cleanup
         let _ = std::process::Command::new("sudo")
@@ -870,7 +933,8 @@ mod tests {
             .expect("apply_root_part must succeed");
         assert!(origs.is_empty(), "created change has no originals");
 
-        let meta2 = fs::symlink_metadata(target2_path).expect("/usr/local/bin/t_root_part must exist");
+        let meta2 =
+            fs::symlink_metadata(target2_path).expect("/usr/local/bin/t_root_part must exist");
         assert_eq!(meta2.uid(), 0, "must be owned by root uid 0");
         assert_eq!(meta2.gid(), 0, "must be owned by root gid 0");
         assert_eq!(meta2.mode() & 0o777, 0o755);

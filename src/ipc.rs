@@ -1,7 +1,5 @@
-use nix::sys::socket::{
-    recvmsg, sendmsg, ControlMessage, ControlMessageOwned, MsgFlags,
-};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use nix::sys::socket::{ControlMessage, ControlMessageOwned, MsgFlags, recvmsg, sendmsg};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::io::{self, IoSlice, IoSliceMut};
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
@@ -32,13 +30,9 @@ pub struct ExitStatus {
     pub code: i32,
 }
 
-pub fn send_msg<T: Serialize>(
-    sock: &UnixStream,
-    msg: &T,
-    fds: &[BorrowedFd],
-) -> io::Result<()> {
-    let payload = serde_json::to_vec(msg)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+pub fn send_msg<T: Serialize>(sock: &UnixStream, msg: &T, fds: &[BorrowedFd]) -> io::Result<()> {
+    let payload =
+        serde_json::to_vec(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let len = (payload.len() as u32).to_le_bytes();
 
     let raw_fds: Vec<RawFd> = fds.iter().map(|f| f.as_raw_fd()).collect();
@@ -49,13 +43,7 @@ pub fn send_msg<T: Serialize>(
     };
 
     let iov = [IoSlice::new(&len), IoSlice::new(&payload)];
-    let sent = sendmsg::<()>(
-        sock.as_raw_fd(),
-        &iov,
-        &cmsgs,
-        MsgFlags::empty(),
-        None,
-    )?;
+    let sent = sendmsg::<()>(sock.as_raw_fd(), &iov, &cmsgs, MsgFlags::empty(), None)?;
 
     let total = 4 + payload.len();
     if sent < total {
@@ -94,7 +82,10 @@ pub fn recv_msg<T: DeserializeOwned>(sock: &UnixStream) -> io::Result<(T, Vec<Ow
         )?;
         if msg.bytes == 0 {
             if read_bytes == 0 {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "socket closed"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "socket closed",
+                ));
             } else {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,

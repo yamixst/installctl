@@ -14,11 +14,9 @@ use std::path::PathBuf;
 pub fn candidates(changes: &[Change], path_dirs: &[PathBuf]) -> Vec<String> {
     let mut names = Vec::new();
     for c in changes {
-        let is_exec_file = c.kind == ChangeKind::Created
-            && c.entry == FileKind::File
-            && (c.mode & 0o111 != 0);
-        let is_created_symlink = c.kind == ChangeKind::Created
-            && c.entry == FileKind::Symlink;
+        let is_exec_file =
+            c.kind == ChangeKind::Created && c.entry == FileKind::File && (c.mode & 0o111 != 0);
+        let is_created_symlink = c.kind == ChangeKind::Created && c.entry == FileKind::Symlink;
 
         if (is_exec_file || is_created_symlink)
             && let Some(parent) = c.path.parent()
@@ -83,11 +81,7 @@ fn prompt_valid_name(p: &mut dyn Prompter) -> String {
 ///   - One candidate -> return it.
 ///   - 2..=9 candidates -> `choose` with digits '1'..'9'.
 ///   - >9 candidates -> `input` asking to type one of them, validating the response.
-pub fn choose_name(
-    cli: Option<&str>,
-    candidates: &[String],
-    p: &mut dyn Prompter,
-) -> String {
+pub fn choose_name(cli: Option<&str>, candidates: &[String], p: &mut dyn Prompter) -> String {
     if let Some(name) = cli {
         if valid_name(name) {
             return name.to_string();
@@ -132,12 +126,7 @@ mod tests {
     use crate::prompt::ScriptedPrompter;
     use std::collections::HashSet;
 
-    fn make_change(
-        path: &str,
-        kind: ChangeKind,
-        entry: FileKind,
-        mode: u32,
-    ) -> Change {
+    fn make_change(path: &str, kind: ChangeKind, entry: FileKind, mode: u32) -> Change {
         Change {
             path: PathBuf::from(path),
             kind,
@@ -272,7 +261,8 @@ mod tests {
 
     #[test]
     fn test_choose_name_empty_candidates_prompt_loop() {
-        let mut p = ScriptedPrompter::new(vec!["invalid/name".into(), "".into(), "valid-tool".into()]);
+        let mut p =
+            ScriptedPrompter::new(vec!["invalid/name".into(), "".into(), "valid-tool".into()]);
         let chosen = choose_name(None, &[], &mut p);
         assert_eq!(chosen, "valid-tool");
     }
@@ -301,7 +291,10 @@ mod tests {
         // Deduplication check
         let mut seen = HashSet::new();
         for dir in &dirs {
-            assert!(seen.insert(dir), "duplicate entry found in path_dirs: {dir:?}");
+            assert!(
+                seen.insert(dir),
+                "duplicate entry found in path_dirs: {dir:?}"
+            );
         }
     }
 }

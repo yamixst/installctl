@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 
 use crate::actions::DangerousAction;
@@ -97,12 +98,17 @@ pub fn run_on_host(req: &ActionRequest, fds: [OwnedFd; 3]) -> io::Result<i32> {
     cmd.stderr(std::process::Stdio::from(err_fd));
 
     let status = cmd.status()?;
-    let code = status.code().unwrap_or(1);
+    let code = status
+        .code()
+        .unwrap_or_else(|| status.signal().map(|s| 128 + s).unwrap_or(1));
     Ok(code)
 }
 
 impl<'a> SandboxEvents for ActionController<'a> {
     fn on_action_conn(&mut self, conn: UnixStream) -> Option<HostCommand> {
+        let _ = conn.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+        let _ = conn.set_write_timeout(Some(std::time::Duration::from_secs(5)));
+
         let (req, fds) = match ipc::recv_msg::<ActionRequest>(&conn) {
             Ok(res) => res,
             Err(e) => {

@@ -13,6 +13,14 @@ use crate::sandbox::{self, SandboxConfig};
 use crate::staging::{self, StagingDir};
 use crate::uninstall;
 
+pub(crate) fn format_command(argv: &[String]) -> String {
+    if argv.len() == 1 {
+        argv[0].clone()
+    } else {
+        crate::actions::shell_quote(argv)
+    }
+}
+
 fn do_run(args: cli::Args, user: &UserInfo, staging: &StagingDir) -> anyhow::Result<i32> {
     // 2. Copy exe and prepare sandbox configuration
     let cur_exe = if let Ok(cargo_bin) = std::env::var("CARGO_BIN_EXE_installctl") {
@@ -27,9 +35,11 @@ fn do_run(args: cli::Args, user: &UserInfo, staging: &StagingDir) -> anyhow::Res
     perms.set_mode(0o755);
     std::fs::set_permissions(&staged_exe, perms)?;
 
+    let command = format_command(&args.command);
+
     let cwd = std::env::current_dir()?;
     let cfg = SandboxConfig {
-        command: args.command.join(" "),
+        command,
         user: user.clone(),
         staging_upper: staging.upper(),
         run_dir: staging.run_dir(),
@@ -39,7 +49,9 @@ fn do_run(args: cli::Args, user: &UserInfo, staging: &StagingDir) -> anyhow::Res
         cwd,
     };
 
-    println!("installctl: running the installer in a sandbox; nothing is changed on your system yet.");
+    println!(
+        "installctl: running the installer in a sandbox; nothing is changed on your system yet."
+    );
 
     // 3. Set up prompter and controller, then run sandboxed
     let mut prompter = prompt::from_env()?;
@@ -68,21 +80,14 @@ fn do_run(args: cli::Args, user: &UserInfo, staging: &StagingDir) -> anyhow::Res
 
     // 4. Collect changes; check if there is anything to install
     let changes = changes::collect(&outcome.overlay)?;
-    let no_run_for_real = !records
-        .iter()
-        .any(|r| r.decision == Decision::RunForReal);
+    let no_run_for_real = !records.iter().any(|r| r.decision == Decision::RunForReal);
     if changes.is_empty() && no_run_for_real {
         prompter.say("Nothing to install.");
         return Ok(0);
     }
 
     // 5. Render report and review changes
-    let rendered_report = report::render(
-        &changes,
-        &records,
-        &outcome.leftovers,
-        outcome.exit_code,
-    );
+    let rendered_report = report::render(&changes, &records, &outcome.leftovers, outcome.exit_code);
     prompter.say(&rendered_report);
 
     let review = report::review(&changes, Path::new("/"), &mut *prompter);
@@ -194,4 +199,29 @@ pub fn run(args: cli::Args) -> i32 {
 
     let _ = staging.remove();
     code
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_command() {
+        assert_eq!(
+            format_command(&["echo 'hello world'".to_string()]),
+            "echo 'hello world'"
+        );
+        assert_eq!(
+            format_command(&["echo".to_string(), "arg with spaces".to_string()]),
+            "echo 'arg with spaces'"
+        );
+        assert_eq!(
+            format_command(&[
+                "install.sh".to_string(),
+                "prefix with space/dir".to_string(),
+                "--flag".to_string(),
+            ]),
+            "install.sh 'prefix with space/dir' --flag"
+        );
+    }
 }

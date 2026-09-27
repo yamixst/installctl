@@ -219,12 +219,7 @@ pub fn collect(overlay: &Overlay) -> io::Result<Vec<Change>> {
                                 deleted_change(path.clone(), origin.clone()),
                             );
                             if origin.kind == FileKind::Dir {
-                                delete_lower_descendants(
-                                    overlay,
-                                    path,
-                                    &mut changes,
-                                    &mut seen,
-                                )?;
+                                delete_lower_descendants(overlay, path, &mut changes, &mut seen)?;
                             }
                             add_change(
                                 &mut changes,
@@ -295,12 +290,7 @@ pub fn collect(overlay: &Overlay) -> io::Result<Vec<Change>> {
                                 );
                             }
                             if *opaque {
-                                delete_lower_descendants(
-                                    overlay,
-                                    path,
-                                    &mut changes,
-                                    &mut seen,
-                                )?;
+                                delete_lower_descendants(overlay, path, &mut changes, &mut seen)?;
                             }
                         } else {
                             add_change(
@@ -382,12 +372,7 @@ pub fn collect(overlay: &Overlay) -> io::Result<Vec<Change>> {
                                 deleted_change(path.clone(), origin.clone()),
                             );
                             if origin.kind == FileKind::Dir {
-                                delete_lower_descendants(
-                                    overlay,
-                                    path,
-                                    &mut changes,
-                                    &mut seen,
-                                )?;
+                                delete_lower_descendants(overlay, path, &mut changes, &mut seen)?;
                             }
                             add_change(
                                 &mut changes,
@@ -415,12 +400,7 @@ pub fn collect(overlay: &Overlay) -> io::Result<Vec<Change>> {
                     deleted_change(path.clone(), origin.clone()),
                 );
                 if origin.kind == FileKind::Dir {
-                    delete_lower_descendants(
-                        overlay,
-                        path,
-                        &mut changes,
-                        &mut seen,
-                    )?;
+                    delete_lower_descendants(overlay, path, &mut changes, &mut seen)?;
                 }
             }
         }
@@ -524,7 +504,11 @@ mod tests {
         drop(f);
 
         let changes = collect(&env.overlay).unwrap();
-        assert!(changes.is_empty(), "expected empty changes, got {:?}", changes);
+        assert!(
+            changes.is_empty(),
+            "expected empty changes, got {:?}",
+            changes
+        );
     }
 
     #[test]
@@ -562,7 +546,9 @@ mod tests {
         std::fs::write(lower_h.join("p"), b"original file").unwrap();
 
         env.overlay.unlink(Path::new("/h/p")).unwrap();
-        env.overlay.mkdir(Path::new("/h/p"), 0o755, 1000, 1000).unwrap();
+        env.overlay
+            .mkdir(Path::new("/h/p"), 0o755, 1000, 1000)
+            .unwrap();
 
         let changes = collect(&env.overlay).unwrap();
         assert_eq!(changes.len(), 2);
@@ -586,7 +572,11 @@ mod tests {
             .unwrap();
 
         let changes = collect(&env.overlay).unwrap();
-        assert!(changes.is_empty(), "expected empty changes, got {:?}", changes);
+        assert!(
+            changes.is_empty(),
+            "expected empty changes, got {:?}",
+            changes
+        );
     }
 
     #[test]
@@ -686,7 +676,9 @@ mod tests {
         env.overlay.rmdir(Path::new("/d")).unwrap();
 
         // Recreate /d -> becomes opaque dir with origin
-        env.overlay.mkdir(Path::new("/d"), 0o755, 1000, 1000).unwrap();
+        env.overlay
+            .mkdir(Path::new("/d"), 0o755, 1000, 1000)
+            .unwrap();
 
         // Create new file /d/b in upper
         let mut f = env

@@ -1,8 +1,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
 use sha2::{Digest, Sha256};
 
 use crate::actions;
@@ -674,7 +674,11 @@ pub fn ask_location(p: &mut dyn Prompter, home: &Path) -> PathBuf {
         };
 
         if let Err(e) = std::fs::create_dir_all(&path) {
-            p.say(&format!("Cannot create directory {}: {}", path.display(), e));
+            p.say(&format!(
+                "Cannot create directory {}: {}",
+                path.display(),
+                e
+            ));
             continue;
         }
 

@@ -112,9 +112,21 @@ mod tests {
         assert_eq!(
             compute_map(1000, 100000, 65536),
             Ok(vec![
-                IdRange { inside: 0, outside: 100000, count: 1000 },
-                IdRange { inside: 1000, outside: 1000, count: 1 },
-                IdRange { inside: 1001, outside: 101000, count: 64535 },
+                IdRange {
+                    inside: 0,
+                    outside: 100000,
+                    count: 1000
+                },
+                IdRange {
+                    inside: 1000,
+                    outside: 1000,
+                    count: 1
+                },
+                IdRange {
+                    inside: 1001,
+                    outside: 101000,
+                    count: 64535
+                },
             ])
         );
     }
@@ -139,8 +151,16 @@ mod tests {
         assert_eq!(
             compute_map(70000, 200000, 65536),
             Ok(vec![
-                IdRange { inside: 0, outside: 200000, count: 65536 },
-                IdRange { inside: 70000, outside: 70000, count: 1 },
+                IdRange {
+                    inside: 0,
+                    outside: 200000,
+                    count: 65536
+                },
+                IdRange {
+                    inside: 70000,
+                    outside: 70000,
+                    count: 1
+                },
             ])
         );
     }
@@ -154,10 +174,7 @@ root:1:2
 agent:100000:65536
 other:200000:65536
 ";
-        assert_eq!(
-            parse_subid(content, "agent", 1000),
-            Some((100000, 65536))
-        );
+        assert_eq!(parse_subid(content, "agent", 1000), Some((100000, 65536)));
 
         let content_numeric = "\
 # comment
@@ -182,6 +199,17 @@ other:5:65536
 
     #[test]
     fn test_apply_map_failure() {
-        assert!(apply_map(1234, "false", &[IdRange { inside: 0, outside: 0, count: 1 }]).is_err());
+        assert!(
+            apply_map(
+                1234,
+                "false",
+                &[IdRange {
+                    inside: 0,
+                    outside: 0,
+                    count: 1
+                }]
+            )
+            .is_err()
+        );
     }
 }

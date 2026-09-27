@@ -10,8 +10,9 @@ pub struct UserInfo {
 
 pub fn current_user() -> anyhow::Result<UserInfo> {
     let uid = nix::unistd::getuid();
-    let user = nix::unistd::User::from_uid(uid)?
-        .ok_or_else(|| anyhow::anyhow!("current user with UID {uid} not found in passwd database"))?;
+    let user = nix::unistd::User::from_uid(uid)?.ok_or_else(|| {
+        anyhow::anyhow!("current user with UID {uid} not found in passwd database")
+    })?;
     let home = std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
         .map(PathBuf::from)
@@ -83,8 +84,8 @@ fn check_apparmor_restricted() -> bool {
 }
 
 fn probe_userns(uid: u32) -> Result<(), String> {
-    use nix::sys::wait::{waitpid, WaitStatus};
-    use nix::unistd::{fork, pipe, ForkResult};
+    use nix::sys::wait::{WaitStatus, waitpid};
+    use nix::unistd::{ForkResult, fork, pipe};
     use std::io::{Read, Write};
 
     let (pipe_read_fd, pipe_write_fd) = pipe().map_err(|e| format!("pipe failed: {e}"))?;
@@ -232,10 +233,7 @@ mod tests {
     #[test]
     fn test_explain_newuidmap() {
         let msg = explain(&Missing::NewUidMap);
-        assert!(
-            msg.contains("uidmap"),
-            "explain missing uidmap: {msg}"
-        );
+        assert!(msg.contains("uidmap"), "explain missing uidmap: {msg}");
     }
 
     #[test]
