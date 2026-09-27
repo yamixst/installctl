@@ -1,0 +1,20 @@
+#!/usr/bin/make -f
+export DH_VERBOSE = 1
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release
+
+override_dh_auto_test:
+	# Unit and integration tests requiring FUSE/userns are run in Docker/CI test suites.
+
+override_dh_auto_install:
+	install -D -m 0755 target/release/installctl debian/installctl/usr/bin/installctl
+	install -D -m 0644 packaging/debian/installctl.apparmor debian/installctl/etc/apparmor.d/installctl
+	install -D -m 0644 README.md debian/installctl/usr/share/doc/installctl/README.md
+
+override_dh_auto_clean:
+	dh_auto_clean
+	cargo clean

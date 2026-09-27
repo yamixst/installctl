@@ -1,0 +1,5 @@
+installctl (0.1.0-1) noble; urgency=medium
+
+  * Initial release for Ubuntu 24.04 LTS.
+
+ -- installctl maintainers <maintainers@installctl.dev>  Sat, 07 Nov 2026 12:00:00 +0000
