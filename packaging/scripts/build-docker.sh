@@ -19,8 +19,8 @@ echo "Running packaging build inside Ubuntu 24.04 container..."
 docker run --rm \
     --user "$(id -u):$(id -g)" \
     -e HOME=/tmp \
-    -v "$REPO_ROOT":/work \
-    -w /work \
+    -v "$REPO_ROOT":/build/installctl \
+    -w /build/installctl \
     installctl-builder:noble \
     bash packaging/scripts/build-local.sh
 
