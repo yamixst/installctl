@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release-deb:
+    name: Build & Release Debian Package
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debhelper dpkg-dev pkg-config libfuse3-dev
+
+      - name: Build Debian package
+        run: bash packaging/scripts/build-local.sh
+
+      - name: Verify package
+        run: |
+          dpkg-deb -I packaging/dist/*.deb
+          dpkg-deb -c packaging/dist/*.deb
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packaging/dist/*.deb
+          generate_release_notes: true

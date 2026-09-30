@@ -12,6 +12,49 @@ Nothing touches your real system until you review and approve the changes.
 4. **Privilege-Separated Application**: Changes requiring root permissions are separated from user-owned changes and applied via a minimal privileged helper.
 5. **Clean Uninstallation**: `installctl` can generate a self-contained, interactive uninstall script that tracks created files, restores modified files from captured originals, and runs inverse operations for system actions.
 
+## Installation
+
+### From Debian / Ubuntu package (`.deb`)
+
+Download the latest `.deb` package from [Releases](https://github.com/mikhail-yatsenko/installctl/releases) or build it from source (see below), then install it using `apt`:
+
+```sh
+sudo apt install ./installctl_*.deb
+```
+
+> [!NOTE]
+> The Debian package automatically installs required runtime dependencies (`libfuse3-3`, `uidmap`, `sudo`) and configures an AppArmor profile (`/etc/apparmor.d/installctl`) for unprivileged user namespaces on Ubuntu 24.04+.
+>
+> You only need to ensure subordinate UIDs/GIDs are configured for your user (see [Prerequisites](#prerequisites)).
+
+### Building the Debian package
+
+You can build the Debian package either in an isolated Docker container (recommended for reproducible builds across any Linux distribution) or directly on a Debian/Ubuntu host.
+
+#### Using Docker (Ubuntu 24.04)
+
+Builds the `.deb` package inside an official Ubuntu 24.04 container. Requires Docker:
+
+```sh
+bash packaging/scripts/build-docker.sh
+```
+
+The resulting package will be verified and written to `packaging/dist/` with ownership matching your host user.
+
+#### Locally
+
+Requires a Debian or Ubuntu system with build dependencies installed:
+
+```sh
+# 1. Install build dependencies
+sudo apt-get update && sudo apt-get install -y debhelper dpkg-dev pkg-config libfuse3-dev
+
+# 2. Build the package
+bash packaging/scripts/build-local.sh
+```
+
+The resulting package will be verified and written to `packaging/dist/`.
+
 ## Usage
 
 Run any installer command through `installctl`:
@@ -53,6 +96,7 @@ During and after the installation run:
    - `Unprivileged user namespaces cannot be created`
    - On recent Ubuntu / Debian kernels:
      `Unprivileged user namespaces are restricted by AppArmor (kernel.apparmor_restrict_unprivileged_userns = 1). Disable the restriction via sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 or provide an AppArmor profile.`
+     *(Note: Installing via the `.deb` package automatically configures and reloads this profile.)*
 
 ## Limitations
 
