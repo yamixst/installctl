@@ -12,8 +12,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dpkg-dev \
     libfuse3-dev \
     pkg-config \
-    uidmap \
-    sudo \
     && rm -rf /var/lib/apt/lists/*
 
 # Install modern Rust stable toolchain via rustup

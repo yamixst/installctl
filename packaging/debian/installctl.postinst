@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    APP_PROFILE="/etc/apparmor.d/installctl"
+    if [ -f "$APP_PROFILE" ] && command -v apparmor_parser >/dev/null 2>&1; then
+        apparmor_parser -r -W "$APP_PROFILE" || true
+    fi
+fi
+
+#DEBHELPER#
+exit 0

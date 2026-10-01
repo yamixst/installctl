@@ -17,8 +17,14 @@ for cmd in cargo rustc dpkg-buildpackage pkg-config dh; do
     fi
 done
 
-if [ ! -f /usr/include/fuse3/fuse.h ]; then
-    missing_deps+=("libfuse3-dev (/usr/include/fuse3/fuse.h)")
+if command -v pkg-config >/dev/null 2>&1; then
+    if ! pkg-config --exists fuse3; then
+        missing_deps+=("libfuse3-dev (pkg-config fuse3)")
+    fi
+else
+    if [ ! -f /usr/include/fuse3/fuse.h ]; then
+        missing_deps+=("libfuse3-dev (/usr/include/fuse3/fuse.h)")
+    fi
 fi
 
 if [ ${#missing_deps[@]} -gt 0 ]; then
@@ -43,6 +49,7 @@ rm -f "$REPO_ROOT"/../installctl_*.buildinfo \
 
 # 3. Symlink and trap handling
 created_debian_symlink=0
+TARGET_DEB_PATH=""
 
 cleanup() {
     local exit_code=$?
@@ -63,6 +70,9 @@ cleanup() {
           "$REPO_ROOT"/../installctl-dbgsym_*
     if [ "$exit_code" -ne 0 ]; then
         rm -f "$REPO_ROOT"/../installctl_*.deb
+        if [ -n "$TARGET_DEB_PATH" ] && [ -f "$TARGET_DEB_PATH" ]; then
+            rm -f "$TARGET_DEB_PATH"
+        fi
     fi
     exit "$exit_code"
 }
@@ -90,10 +100,11 @@ if [ ${#deb_files[@]} -eq 0 ]; then
     exit 1
 fi
 
+TARGET_DEB="${deb_files[0]##*/}"
+TARGET_DEB_PATH="$REPO_ROOT/packaging/dist/$TARGET_DEB"
 mv "${deb_files[@]}" "$REPO_ROOT/packaging/dist/"
 
-TARGET_DEB="${deb_files[0]##*/}"
-DEB_PATH="$REPO_ROOT/packaging/dist/$TARGET_DEB"
+DEB_PATH="$TARGET_DEB_PATH"
 
 echo ""
 echo "=== Package Control Information ==="
@@ -109,6 +120,13 @@ fi
 for dep in libfuse3-3 uidmap sudo; do
     if ! echo "$pkg_info" | grep "^ Depends:" | grep -q "$dep"; then
         echo "Error: Generated package is missing required dependency in Depends: $dep" >&2
+        exit 1
+    fi
+done
+
+for script in postinst postrm; do
+    if ! echo "$pkg_info" | grep -q "$script"; then
+        echo "Error: Generated package is missing maintainer script: $script" >&2
         exit 1
     fi
 done

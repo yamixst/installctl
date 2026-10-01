@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: installctl
 Upstream-Contact: installctl maintainers <maintainers@installctl.dev>
-Source: https://github.com/installctl/installctl
+Source: https://github.com/mikhail-yatsenko/installctl
 
 Files: *
 Copyright: 2026 installctl maintainers <maintainers@installctl.dev>

@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: installctl maintainers <maintainers@installctl.dev>
 Build-Depends: debhelper-compat (= 13), pkg-config, libfuse3-dev
 Standards-Version: 4.6.2
-Homepage: https://github.com/installctl/installctl
+Homepage: https://github.com/mikhail-yatsenko/installctl
 
 Package: installctl
 Architecture: any
