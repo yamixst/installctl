@@ -1,0 +1,26 @@
+FROM almalinux:9
+
+RUN dnf install -y \
+    gcc \
+    make \
+    pkgconf-pkg-config \
+    fuse3-devel \
+    rpm-build \
+    tar \
+    gzip \
+    curl \
+    ca-certificates \
+    && dnf clean all
+
+# Install modern Rust toolchain (supporting Rust 2024 edition)
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:${PATH}
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal \
+    && chmod -R a+rwX /usr/local/cargo /usr/local/rustup
+
+# Dedicated world-writable build directory for arbitrary unprivileged UIDs
+RUN mkdir -p /build && chmod 1777 /build
+
+WORKDIR /build/installctl
