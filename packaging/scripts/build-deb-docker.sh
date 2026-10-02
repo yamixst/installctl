@@ -11,7 +11,7 @@ fi
 
 # 2. Build Docker builder image
 echo "Building Docker image installctl-builder:noble..."
-docker build -t installctl-builder:noble -f "$REPO_ROOT/packaging/docker/Dockerfile" "$REPO_ROOT/packaging/docker"
+docker build -t installctl-builder:noble -f "$REPO_ROOT/packaging/docker/Dockerfile.deb" "$REPO_ROOT/packaging/docker"
 
 # 3. Run packaging build inside container
 echo ""
@@ -22,7 +22,7 @@ docker run --rm \
     -v "$REPO_ROOT":/build/installctl \
     -w /build/installctl \
     installctl-builder:noble \
-    bash packaging/scripts/build-local.sh
+    bash packaging/scripts/build-deb-local.sh
 
 # 4. Verify generated package ownership on host
 echo ""

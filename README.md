@@ -36,7 +36,7 @@ You can build the Debian package either in an isolated Docker container (recomme
 Builds the `.deb` package inside an official Ubuntu 24.04 container. Requires Docker:
 
 ```sh
-bash packaging/scripts/build-docker.sh
+bash packaging/scripts/build-deb-docker.sh
 ```
 
 The resulting package will be verified and written to `packaging/dist/` with ownership matching your host user.
@@ -50,7 +50,7 @@ Requires a Debian or Ubuntu system with build dependencies installed:
 sudo apt-get update && sudo apt-get install -y debhelper dpkg-dev pkg-config libfuse3-dev
 
 # 2. Build the package
-bash packaging/scripts/build-local.sh
+bash packaging/scripts/build-deb-local.sh
 ```
 
 The resulting package will be verified and written to `packaging/dist/`.
