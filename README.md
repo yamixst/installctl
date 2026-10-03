@@ -16,7 +16,7 @@ Nothing touches your real system until you review and approve the changes.
 
 ### From Debian / Ubuntu package (`.deb`)
 
-Download the latest `.deb` package from [Releases](https://github.com/mikhail-yatsenko/installctl/releases) or build it from source (see below), then install it using `apt`:
+Download the latest `.deb` package from [Releases](https://github.com/yamixst/installctl/releases) or build it from source (see below), then install it using `apt`:
 
 ```sh
 sudo apt install ./installctl_*.deb

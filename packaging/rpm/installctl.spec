@@ -4,7 +4,7 @@ Release:        1%{?dist}
 Summary:        Safe sandbox runner and change tracker for software installers
 
 License:        Apache-2.0
-URL:            https://github.com/mikhail-yatsenko/installctl
+URL:            https://github.com/yamixst/installctl
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  gcc

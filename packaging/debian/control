@@ -1,10 +1,10 @@
 Source: installctl
 Section: utils
 Priority: optional
-Maintainer: installctl maintainers <maintainers@installctl.dev>
+Maintainer: Mikhail Yatsenko <mikhail.yatsenko@gmail.com>
 Build-Depends: debhelper-compat (= 13), pkg-config, libfuse3-dev
 Standards-Version: 4.6.2
-Homepage: https://github.com/mikhail-yatsenko/installctl
+Homepage: https://github.com/yamixst/installctl
 
 Package: installctl
 Architecture: any
