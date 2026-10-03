@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  release-deb:
-    name: Build & Release Debian Package
+  build-deb:
+    name: Build Debian Package
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -32,8 +32,42 @@ jobs:
           dpkg-deb -I packaging/dist/*.deb
           dpkg-deb -c packaging/dist/*.deb
 
-      - name: Upload Release Asset
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-package
+          path: packaging/dist/*.deb
+
+  build-rpm:
+    name: Build RPM Package (AlmaLinux 9)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build RPM package in Docker
+        run: bash packaging/scripts/build-rpm-docker.sh
+
+      - name: Upload rpm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-package
+          path: packaging/dist/*.rpm
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-deb, build-rpm]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
-          files: packaging/dist/*.deb
+          files: |
+            dist/**/*.deb
+            dist/**/*.rpm
           generate_release_notes: true

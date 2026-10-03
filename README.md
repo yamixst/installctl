@@ -27,6 +27,32 @@ sudo apt install ./installctl_*.deb
 >
 > You only need to ensure subordinate UIDs/GIDs are configured for your user (see [Prerequisites](#prerequisites)).
 
+### From RPM package (`.rpm`) (AlmaLinux 9 / EL9)
+
+Download the latest `.rpm` package from [Releases](https://github.com/yamixst/installctl/releases) or build it from source (see below), then install it using `dnf`:
+
+```sh
+sudo dnf install ./installctl-*.rpm
+```
+
+> [!NOTE]
+> The RPM package automatically pulls runtime dependencies (`fuse3-libs`, `shadow-utils`, `sudo`). On Enterprise Linux 9, unprivileged user namespaces are enabled by default.
+
+### From Source (Cargo)
+
+Prerequisites: Rust toolchain (>= 1.85 / Rust 2024 edition), `gcc`, `pkg-config`, and `libfuse3-dev` (or `fuse3-devel`).
+
+```sh
+git clone https://github.com/yamixst/installctl.git
+cd installctl
+cargo build --release
+install -m 0755 target/release/installctl ~/.local/bin/installctl
+```
+
+---
+
+## Building Packages
+
 ### Building the Debian package
 
 You can build the Debian package either in an isolated Docker container (recommended for reproducible builds across any Linux distribution) or directly on a Debian/Ubuntu host.
@@ -51,6 +77,34 @@ sudo apt-get update && sudo apt-get install -y debhelper dpkg-dev pkg-config lib
 
 # 2. Build the package
 bash packaging/scripts/build-deb-local.sh
+```
+
+The resulting package will be verified and written to `packaging/dist/`.
+
+### Building the RPM package (AlmaLinux 9 / EL9)
+
+You can build the RPM package either in an isolated Docker container (guaranteeing AlmaLinux 9 / EL9 glibc 2.34 ABI compatibility) or locally on an EL9 host.
+
+#### Using Docker (AlmaLinux 9)
+
+Builds the `.rpm` package inside an official AlmaLinux 9 container. Requires Docker:
+
+```sh
+bash packaging/scripts/build-rpm-docker.sh
+```
+
+The resulting package will be verified and written to `packaging/dist/` with ownership matching your host user.
+
+#### Locally
+
+Requires an Enterprise Linux 9 or compatible system with build dependencies installed:
+
+```sh
+# 1. Install build dependencies
+sudo dnf install -y rpm-build gcc pkgconf-pkg-config fuse3-devel
+
+# 2. Build the package
+bash packaging/scripts/build-rpm-local.sh
 ```
 
 The resulting package will be verified and written to `packaging/dist/`.
