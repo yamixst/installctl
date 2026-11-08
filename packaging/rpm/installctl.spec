@@ -1,3 +1,8 @@
+# The release binary is built by cargo without DWARF info, so the
+# auto-generated debuginfo/debugsource subpackages would be empty and
+# rpmbuild fails with "Empty %files file debugsourcefiles.list".
+%global debug_package %{nil}
+
 Name:           installctl
 Version:        0.1.0
 Release:        1%{?dist}
