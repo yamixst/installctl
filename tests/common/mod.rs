@@ -40,16 +40,27 @@ fn check_newuidmap() -> Result<(), String> {
     }
 }
 
-pub fn priv_env() -> bool {
-    let fuse_res = check_fuse();
-    let uid_res = check_newuidmap();
+fn check_userns_allowed() -> Result<(), String> {
+    let restricted =
+        std::fs::read_to_string("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
+            .map(|s| s.trim() == "1")
+            .unwrap_or(false);
+    if restricted {
+        Err("unprivileged user namespaces are restricted by AppArmor".to_string())
+    } else {
+        Ok(())
+    }
+}
 
-    let reason = match (fuse_res, uid_res) {
-        (Ok(()), Ok(())) => return true,
-        (Err(e1), Ok(())) => e1,
-        (Ok(()), Err(e2)) => e2,
-        (Err(e1), Err(e2)) => format!("{e1}; {e2}"),
-    };
+pub fn priv_env() -> bool {
+    let errors: Vec<String> = [check_fuse(), check_newuidmap(), check_userns_allowed()]
+        .into_iter()
+        .filter_map(Result::err)
+        .collect();
+    if errors.is_empty() {
+        return true;
+    }
+    let reason = errors.join("; ");
 
     if std::env::var("INSTALLCTL_REQUIRE_PRIV_TESTS").as_deref() == Ok("1") {
         panic!("{reason}");

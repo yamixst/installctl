@@ -245,9 +245,18 @@ mod tests {
 
     #[test]
     fn test_probe_userns() {
+        // Hosts such as Ubuntu 24.04 (including GitHub runners) restrict
+        // unprivileged user namespaces; the probe can only succeed elsewhere.
+        // The privileged suite sets INSTALLCTL_REQUIRE_PRIV_TESTS=1 to forbid
+        // skipping.
+        if check_apparmor_restricted()
+            && std::env::var("INSTALLCTL_REQUIRE_PRIV_TESTS").as_deref() != Ok("1")
+        {
+            eprintln!("skipping: unprivileged user namespaces are restricted by AppArmor");
+            return;
+        }
         let user = current_user().expect("current_user should succeed");
         let res = probe_userns(user.uid);
-        // On this host unshare works, so res should be Ok
         assert!(res.is_ok(), "probe_userns failed: {res:?}");
     }
 }
