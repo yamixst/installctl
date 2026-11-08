@@ -962,9 +962,17 @@ mod tests {
         // root_dir is writable by current user
         assert!(!needs_root(&change_user, Path::new("/")));
 
+        // Root bypasses permission checks, so a read-only dir is only
+        // meaningful for unprivileged users. A dedicated read-only dir is used
+        // instead of a system path such as /usr/local/bin, which CI runners
+        // may make writable for the build user.
         if nix::unistd::getuid().as_raw() != 0 {
+            use std::os::unix::fs::PermissionsExt;
+            let ro_dir = root_dir.path().join("readonly");
+            std::fs::create_dir(&ro_dir).unwrap();
+            std::fs::set_permissions(&ro_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
             let change_root = Change {
-                path: PathBuf::from("/usr/local/bin/test_needs_root_file"),
+                path: ro_dir.join("test_needs_root_file"),
                 kind: ChangeKind::Created,
                 entry: FileKind::File,
                 size: 0,
