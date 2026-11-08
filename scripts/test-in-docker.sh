@@ -4,7 +4,10 @@ set -e
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_DIR"
 
-docker build -t installctl-test -f docker/Dockerfile.test .
+docker build -t installctl-test \
+    --build-arg TESTER_UID="$(id -u)" \
+    --build-arg TESTER_GID="$(id -g)" \
+    -f docker/Dockerfile.test .
 
 docker run --rm --privileged \
     -v "$REPO_DIR:/work" \

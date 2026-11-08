@@ -14,10 +14,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# The repository is bind-mounted at /work and cargo writes its target dir
+# there, so tester must have the same uid as the owner of the host checkout
+# (1000 locally, 1001 on GitHub runners). scripts/test-in-docker.sh passes
+# the host ids; an existing group with the requested gid is reused.
+ARG TESTER_UID=1000
+ARG TESTER_GID=1000
+
 # Delete existing default user with uid 1000 if present and create tester user
 RUN userdel -r ubuntu 2>/dev/null || true && \
-    groupadd -g 1000 tester && \
-    useradd -u 1000 -g tester -m -d /home/tester -s /bin/bash tester && \
+    (getent group "$TESTER_GID" >/dev/null || groupadd -g "$TESTER_GID" tester) && \
+    useradd -u "$TESTER_UID" -g "$TESTER_GID" -m -d /home/tester -s /bin/bash tester && \
     echo "tester ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/tester && \
     chmod 0440 /etc/sudoers.d/tester && \
     echo "tester:100000:65536" >> /etc/subuid && \
