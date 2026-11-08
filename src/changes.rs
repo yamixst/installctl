@@ -428,6 +428,16 @@ mod tests {
         overlay: Overlay,
     }
 
+    // Files created directly in the lower dir are owned by the user running the
+    // tests, so overlay entries must use the same ids to compare as unchanged.
+    fn uid() -> u32 {
+        nix::unistd::getuid().as_raw()
+    }
+
+    fn gid() -> u32 {
+        nix::unistd::getgid().as_raw()
+    }
+
     impl TestEnv {
         fn new() -> Self {
             let lower_dir = TempDir::new().unwrap();
@@ -451,7 +461,7 @@ mod tests {
 
         let mut f = env
             .overlay
-            .create_file(Path::new("/h/.local/bin/app"), 0o755, 1000, 1000)
+            .create_file(Path::new("/h/.local/bin/app"), 0o755, uid(), gid())
             .unwrap();
         f.write_all(b"#!/bin/sh\nexit 0\n").unwrap();
         drop(f);
@@ -490,7 +500,7 @@ mod tests {
 
         let mut f = env
             .overlay
-            .create_file(Path::new("/h/.tmp-x"), 0o644, 1000, 1000)
+            .create_file(Path::new("/h/.tmp-x"), 0o644, uid(), gid())
             .unwrap();
         f.write_all(b"temporary").unwrap();
         drop(f);
@@ -547,7 +557,7 @@ mod tests {
 
         env.overlay.unlink(Path::new("/h/p")).unwrap();
         env.overlay
-            .mkdir(Path::new("/h/p"), 0o755, 1000, 1000)
+            .mkdir(Path::new("/h/p"), 0o755, uid(), gid())
             .unwrap();
 
         let changes = collect(&env.overlay).unwrap();
@@ -631,19 +641,19 @@ mod tests {
 
         // Create new symlink s0
         env.overlay
-            .symlink(Path::new("/s0"), Path::new("target0"), 1000, 1000)
+            .symlink(Path::new("/s0"), Path::new("target0"), uid(), gid())
             .unwrap();
 
         // Modify s1 by unlinking and recreating with target_new
         env.overlay.unlink(Path::new("/s1")).unwrap();
         env.overlay
-            .symlink(Path::new("/s1"), Path::new("target_new"), 1000, 1000)
+            .symlink(Path::new("/s1"), Path::new("target_new"), uid(), gid())
             .unwrap();
 
         // Recreate s2 with identical target
         env.overlay.unlink(Path::new("/s2")).unwrap();
         env.overlay
-            .symlink(Path::new("/s2"), Path::new("target2"), 1000, 1000)
+            .symlink(Path::new("/s2"), Path::new("target2"), uid(), gid())
             .unwrap();
 
         let changes = collect(&env.overlay).unwrap();
@@ -677,13 +687,13 @@ mod tests {
 
         // Recreate /d -> becomes opaque dir with origin
         env.overlay
-            .mkdir(Path::new("/d"), 0o755, 1000, 1000)
+            .mkdir(Path::new("/d"), 0o755, uid(), gid())
             .unwrap();
 
         // Create new file /d/b in upper
         let mut f = env
             .overlay
-            .create_file(Path::new("/d/b"), 0o644, 1000, 1000)
+            .create_file(Path::new("/d/b"), 0o644, uid(), gid())
             .unwrap();
         f.write_all(b"new b").unwrap();
         drop(f);
